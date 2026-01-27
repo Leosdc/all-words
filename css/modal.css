@@ -1,0 +1,125 @@
+/* Modal Overlay */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(15, 23, 42, 0.6);
+    backdrop-filter: blur(8px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+    /* Increased to ensure it's on top of everything */
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    /* Block-proof when hidden */
+    transition: all 0.3s ease;
+}
+
+.modal-overlay.active {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+}
+
+/* Modal Content */
+.modal-content {
+    background: rgba(255, 255, 255, 0.95);
+    padding: 2rem;
+    border-radius: 24px;
+    width: 95%;
+    max-width: 600px;
+    /* Increased from 400px */
+    text-align: left;
+    /* Better for forms */
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.5);
+    transform: translateY(20px);
+    transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.modal-overlay.active .modal-content {
+    transform: translateY(0);
+}
+
+/* Ensure tall modals scroll the VIEWPORT, not themselves if possible, or gracefully handle it */
+@media (max-height: 800px) {
+    .modal-content {
+        max-height: 85vh;
+        overflow-y: auto;
+    }
+}
+
+/* Modal Icons */
+.modal-icon-wrapper {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    margin: 0 auto 1.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal-type-error .modal-icon-wrapper {
+    background: #fee2e2;
+    color: #ef4444;
+}
+
+.modal-type-success .modal-icon-wrapper {
+    background: #dcfce7;
+    color: #22c55e;
+}
+
+.modal-type-warning .modal-icon-wrapper {
+    background: #fef3c7;
+    color: #f59e0b;
+}
+
+/* Typography */
+.modal-content h3 {
+    color: #0f172a;
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin-bottom: 0.5rem;
+}
+
+.modal-content p {
+    color: #64748b;
+    line-height: 1.6;
+    margin-bottom: 2rem;
+}
+
+/* Buttons */
+.modal-btn {
+    width: 100%;
+    padding: 0.875rem;
+    border-radius: 12px;
+    border: none;
+    font-weight: 600;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: filter 0.2s;
+}
+
+.modal-btn:hover {
+    filter: brightness(0.95);
+}
+
+.modal-type-error .modal-btn {
+    background: #ef4444;
+    color: white;
+}
+
+.modal-type-success .modal-btn {
+    background: #22c55e;
+    color: white;
+}
+
+.modal-type-warning .modal-btn {
+    background: #f59e0b;
+    color: white;
+}

@@ -1,0 +1,236 @@
+/* DatePicker Styles */
+.datepicker-wrapper {
+    position: relative;
+    width: 100%;
+}
+
+.datepicker-input {
+    width: 100%;
+    padding-right: 40px !important;
+    /* Space for icon */
+    cursor: pointer;
+    background: white;
+}
+
+.datepicker-icon {
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 18px;
+    height: 18px;
+    color: #64748b;
+    pointer-events: none;
+}
+
+.datepicker-calendar {
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 0;
+    width: 280px;
+    background: white;
+    border-radius: 16px;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+    border: 1px solid #e2e8f0;
+    padding: 1rem;
+    z-index: 20000;
+    display: none;
+    opacity: 0;
+    transform: translateY(-10px);
+    transition: all 0.2s ease;
+}
+
+.datepicker-calendar.active {
+    display: block;
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.datepicker-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.dp-title {
+    font-weight: 600;
+    color: var(--dark, #0f172a);
+    display: flex;
+    gap: 5px;
+}
+
+.dp-prev,
+.dp-next {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 8px;
+    color: #64748b;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s;
+}
+
+.dp-prev:hover,
+.dp-next:hover {
+    background: #f1f5f9;
+    color: var(--primary-blue, #3b82f6);
+}
+
+.dp-weekdays {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    text-align: center;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #94a3b8;
+    margin-bottom: 0.5rem;
+}
+
+.dp-days {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 4px;
+}
+
+.dp-day {
+    aspect-ratio: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.9rem;
+    color: var(--dark, #0f172a);
+    border-radius: 50%;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.dp-day:hover {
+    background: #f1f5f9;
+}
+
+.dp-day.prev-month {
+    color: #cbd5e1;
+    pointer-events: none;
+}
+
+.dp-day.today {
+    color: var(--primary-blue, #3b82f6);
+    font-weight: 700;
+    background: #eff6ff;
+}
+
+/* ... previous code ... */
+.dp-day.selected {
+    background: var(--primary-blue, #3b82f6);
+    color: white;
+    font-weight: 600;
+}
+
+/* Clickable Title */
+.dp-title.clickable {
+    cursor: pointer;
+    border-radius: 8px;
+    padding: 4px 8px;
+    transition: background 0.2s;
+}
+
+.dp-title.clickable:hover {
+    background: #f1f5f9;
+}
+
+/* Grid View (Months/Years) */
+.datepicker-grid-view {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.5rem;
+}
+
+.dp-month-item,
+.dp-year-item {
+    padding: 0.75rem 0.25rem;
+    text-align: center;
+    border-radius: 12px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    color: var(--dark);
+    transition: all 0.2s;
+}
+
+.dp-month-item:hover,
+.dp-year-item:hover {
+    background: #f1f5f9;
+}
+
+.dp-month-item.selected,
+.dp-year-item.selected {
+    background: var(--primary-blue);
+    color: white;
+    font-weight: 600;
+}
+
+/* Time Picker */
+.timepicker-container {
+    width: 220px;
+}
+
+.timepicker-columns {
+    display: flex;
+    gap: 1rem;
+    height: 200px;
+    margin-bottom: 1rem;
+}
+
+.tp-col {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.tp-header {
+    text-align: center;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+    font-size: 0.85rem;
+    color: #64748b;
+}
+
+.tp-list {
+    flex: 1;
+    overflow-y: auto;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 0.25rem;
+}
+
+/* Scrollbar */
+.tp-list::-webkit-scrollbar {
+    width: 4px;
+}
+
+.tp-list::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 4px;
+}
+
+.tp-item {
+    text-align: center;
+    padding: 0.4rem;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: all 0.2s;
+}
+
+.tp-item:hover {
+    background: #f1f5f9;
+}
+
+.tp-item.selected {
+    background: var(--primary-blue);
+    color: white;
+    font-weight: 600;
+}
