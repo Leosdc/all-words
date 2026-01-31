@@ -17,7 +17,24 @@ class AuthService {
 
                 try {
                     // Fetch role from Firestore
-                    const doc = await db.collection('users').doc(user.uid).get();
+                    let doc = await db.collection('users').doc(user.uid).get();
+
+                    // Retry logic for new users (race condition fix)
+                    if (!doc.exists) {
+                        const creationTime = new Date(user.metadata.creationTime).getTime();
+                        const now = new Date().getTime();
+                        const isNewUser = (now - creationTime) < 10000; // Created in last 10s
+
+                        if (isNewUser) {
+                            console.log("New user detected, retrying role fetch...");
+                            for (let i = 0; i < 3; i++) {
+                                await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1s
+                                doc = await db.collection('users').doc(user.uid).get();
+                                if (doc.exists) break;
+                            }
+                        }
+                    }
+
                     if (doc.exists) {
                         const userData = doc.data();
                         this.currentUser = user;
@@ -25,6 +42,7 @@ class AuthService {
                         onAuthChange(user, this.currentRole);
                     } else {
                         // Fallback implementation if doc is missing (rare)
+                        console.warn("User role not found after retries, defaulting to student.");
                         this.currentUser = user;
                         this.currentRole = 'student';
                         onAuthChange(user, 'student');
@@ -76,28 +94,36 @@ class AuthService {
                 name: name,
                 email: email.toLowerCase().trim(),
                 role: role,
-                createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                migrationDone: 'v4' // New users don't need migration
             };
 
             // Check if there is a pending student link for this email
             const searchEmail = email.toLowerCase().trim();
             if (role === 'student') {
-                // Find student record in global collection by email
-                const studentQuery = await db.collection('students').where('email', '==', searchEmail).get();
+                try {
+                    // Find student record in global collection by email
+                    // Note: This might fail if permissions don't allow reading 'students' collection yet
+                    const studentQuery = await db.collection('students').where('email', '==', searchEmail).get();
 
-                if (!studentQuery.empty) {
-                    const studentDoc = studentQuery.docs[0];
-                    const studentData = studentDoc.data();
+                    if (!studentQuery.empty) {
+                        const studentDoc = studentQuery.docs[0];
+                        const studentData = studentDoc.data();
 
-                    userDoc.linkedTeacher = studentData.teacherUid;
-                    userDoc.studentIdInTeacherDoc = studentDoc.id;
+                        userDoc.linkedTeacher = studentData.teacherUid;
+                        userDoc.studentIdInTeacherDoc = studentDoc.id;
 
-                    // Update Global Student record to ACTIVE and link UID
-                    await db.collection('students').doc(studentDoc.id)
-                        .update({
-                            status: 'active',
-                            userUid: user.uid
-                        });
+                        // Update Global Student record to ACTIVE and link UID
+                        // Note: This might fail if permissions are strict
+                        await db.collection('students').doc(studentDoc.id)
+                            .update({
+                                status: 'active',
+                                userUid: user.uid
+                            });
+                    }
+                } catch (linkError) {
+                    console.warn("Auto-linking failed (likely permission issues). Account will be created anyway.", linkError);
+                    // We continue to create the user. Teacher can sync later.
                 }
             }
 
