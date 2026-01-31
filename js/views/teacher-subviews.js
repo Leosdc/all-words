@@ -70,10 +70,16 @@ window.syncStudentsWithUsers = async (event) => {
                 }));
 
                 // 2. Update Student User profile
-                syncPromises.push(db.collection('users').doc(existingUser.id).update({
-                    linkedTeacher: uid,
-                    studentIdInTeacherDoc: studentId
-                }));
+                // Try-catch block to handle permission errors (Teacher can't write to Student Profile directly)
+                try {
+                    await db.collection('users').doc(existingUser.id).update({
+                        linkedTeacher: uid,
+                        studentIdInTeacherDoc: studentId
+                    });
+                } catch (permError) {
+                    console.warn(`Could not update student user profile (expected permission error): ${permError.message}`);
+                    // Swallow error - relying on Student's own login to pick up the 'student_links' and update themselves.
+                }
 
                 // 3. Update ALL existing lessons for this student to include userUid
                 const studentLessons = await db.collection('lessons').where('studentId', '==', studentId).get();

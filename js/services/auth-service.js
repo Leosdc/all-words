@@ -40,6 +40,11 @@ class AuthService {
                         this.currentUser = user;
                         this.currentRole = userData.role || 'student';
                         onAuthChange(user, this.currentRole);
+
+                        // Self-Healing: Check for pending links if student
+                        if (this.currentRole === 'student') {
+                            this.checkPendingLinks(user);
+                        }
                     } else {
                         // Fallback implementation if doc is missing (rare)
                         console.warn("User role not found after retries, defaulting to student.");
@@ -154,6 +159,35 @@ class AuthService {
         } catch (error) {
             console.error("Error updating profile:", error);
             throw error;
+        }
+    }
+
+    // Self-Healing: Student checks if there is a pending link from a teacher
+    async checkPendingLinks(user) {
+        try {
+            const email = user.email.toLowerCase().trim();
+            const linkDoc = await db.collection('student_links').doc(email).get();
+
+            if (linkDoc.exists) {
+                const data = linkDoc.data();
+                if (data.status === 'active' || data.status === 'waiting') {
+                    // Update own profile to link to teacher
+                    await db.collection('users').doc(user.uid).update({
+                        linkedTeacher: data.teacherUid,
+                        studentIdInTeacherDoc: data.studentId
+                    });
+
+                    // Update link status to 'linked' (optional cleanup, or keep active)
+                    await db.collection('student_links').doc(email).update({
+                        uid: user.uid,
+                        status: 'linked'
+                    });
+
+                    console.log("Self-healing: Student linked to teacher successfully.");
+                }
+            }
+        } catch (error) {
+            console.error("Error checking pending links:", error);
         }
     }
 
