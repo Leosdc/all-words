@@ -93,13 +93,27 @@ export const StudentDashboard = {
 
             // 2. Fetch Lessons and Teacher Info
             const teacherUid = userData.linkedTeacher;
-            const [lessonsSnapshot, teacherDoc] = await Promise.all([
-                db.collection('lessons')
-                    .where('teacherUid', '==', teacherUid)
-                    .where('studentId', '==', userData.studentIdInTeacherDoc || '')
-                    .get(),
-                db.collection('users').doc(teacherUid).get()
-            ]);
+
+            // Fetch lessons (usually safe)
+            const lessonsSnapshot = await db.collection('lessons')
+                .where('teacherUid', '==', teacherUid)
+                .where('studentId', '==', userData.studentIdInTeacherDoc || '')
+                .get();
+
+            // Fetch Teacher Profile with Retry (Fix for Race Condition on Permissions)
+            let teacherDoc = { exists: false };
+            try {
+                teacherDoc = await db.collection('users').doc(teacherUid).get();
+            } catch (err) {
+                console.warn("Initial teacher fetch failed, retrying...", err);
+                await new Promise(r => setTimeout(r, 800)); // Wait 800ms
+                try {
+                    teacherDoc = await db.collection('users').doc(teacherUid).get();
+                } catch (err2) {
+                    console.error("Retried teacher fetch failed:", err2);
+                    // Fallback: Continue without teacher details (don't crash dashboard)
+                }
+            }
 
             const teacherData = teacherDoc.exists ? teacherDoc.data() : {};
             const teacherName = teacherData.displayName || teacherData.name || 'Professor';
