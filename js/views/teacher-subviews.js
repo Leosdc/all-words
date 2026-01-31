@@ -14,6 +14,7 @@ const getSidebar = (active) => {
             <div class="logo-text" style="margin-bottom: 3rem; line-height: 1.2;">ALL WORDS<br><span style="font-size: 0.45em; opacity: 0.6; display: block;">${role === 'admin' ? 'ADMIN' : 'TEACHER'}</span></div>
             <nav>
                 <div class="nav-item ${active === 'overview' ? 'active' : ''}" id="nav-overview"><i data-lucide="layout-dashboard"></i> Visão Geral</div>
+                <div class="nav-item ${active === 'lessons' ? 'active' : ''}" id="nav-lessons"><i data-lucide="calendar"></i> Aulas</div>
                 <div class="nav-item ${active === 'students' ? 'active' : ''}" id="nav-students"><i data-lucide="users"></i> Meus Alunos</div>
                 <div class="nav-item ${active === 'exercises' ? 'active' : ''}" id="nav-exercises"><i data-lucide="dumbbell"></i> Exercícios</div>
                 <div class="nav-item ${active === 'formation' ? 'active' : ''}" id="nav-formation"><i data-lucide="graduation-cap"></i> Formação</div>
@@ -120,6 +121,8 @@ window.syncStudentsWithUsers = async (event) => {
 
 const attachSidebarEvents = (navigate) => {
     document.getElementById('nav-overview').onclick = () => navigate('teacher-dashboard');
+    const navLessons = document.getElementById('nav-lessons');
+    if (navLessons) navLessons.onclick = () => navigate('teacher-lessons');
     document.getElementById('nav-students').onclick = () => navigate('teacher-students');
     document.getElementById('nav-exercises').onclick = () => navigate('teacher-exercises');
     document.getElementById('nav-formation').onclick = () => navigate('teacher-formation');
@@ -1392,4 +1395,110 @@ export const TeacherFormation = {
         `;
     },
     attachEvents: (navigate) => attachSidebarEvents(navigate)
+};
+
+export const TeacherLessons = {
+    render: () => {
+        return `
+            <section id="teacher-lessons-view" class="view active teacher-dash">
+                <div class="dashboard-layout">
+                    ${getSidebar('lessons')}
+                    <main class="main-content">
+                        <div class="header-bar">
+                            <h2>Minhas Aulas</h2>
+                            <button class="btn-primary" id="btn-add-lesson-global"><i data-lucide="plus"></i> Nova Aula</button>
+                        </div>
+                        <div class="content-body" id="lessons-list-container">
+                            <div style="text-align: center; padding: 4rem;">
+                                <div class="spinner"></div>
+                                <p style="margin-top: 1rem; color: #64748b;">Carregando cronograma...</p>
+                            </div>
+                        </div>
+                    </main>
+                </div>
+            </section>
+        `;
+    },
+    attachEvents: (navigate) => {
+        attachSidebarEvents(navigate);
+
+        const btnAdd = document.getElementById('btn-add-lesson-global');
+        if (btnAdd) {
+            btnAdd.onclick = () => {
+                Toast.show('Vá para "Meus Alunos" e selecione um aluno para agendar uma aula.', 'info', 4000);
+            };
+        }
+
+        // Load Lessons
+        const loadLessons = async () => {
+            const uid = getUserId();
+            const container = document.getElementById('lessons-list-container');
+            if (!uid || !container) return;
+
+            try {
+                // Get all lessons for this teacher
+                const snapshot = await db.collection('lessons')
+                    .where('teacherUid', '==', uid)
+                    .orderBy('date', 'desc')
+                    .get();
+
+                const lessons = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+                if (lessons.length === 0) {
+                    container.innerHTML = `
+                        <div style="text-align: center; padding: 4rem; background: white; border-radius: 16px;">
+                            <i data-lucide="calendar" style="width: 48px; height: 48px; color: #cbd5e1; margin-bottom: 1rem;"></i>
+                            <h3>Nenhuma aula agendada</h3>
+                            <p style="color: #64748b;">Suas aulas agendadas aparecerão aqui.</p>
+                        </div>
+                    `;
+                    if (window.lucide) lucide.createIcons();
+                    return;
+                }
+
+                // Get Student Names map for better display
+                const studentIds = [...new Set(lessons.map(l => l.studentId))];
+                const studentMap = {};
+
+                // Fetch student names (optimized in chunks if needed, but simple loop fine for now)
+                for (const sid of studentIds) {
+                    try {
+                        const sDoc = await db.collection('students').doc(sid).get();
+                        if (sDoc.exists) studentMap[sid] = sDoc.data().name;
+                    } catch (e) { }
+                }
+
+                container.innerHTML = `
+                    <div style="display: grid; gap: 1rem;">
+                        ${lessons.map(lesson => `
+                            <div class="lesson-card" style="background: white; padding: 1.5rem; border-radius: 12px; border: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center;">
+                                <div>
+                                    <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
+                                        ${new Date(lesson.date + 'T' + (lesson.time || '00:00')) < new Date() ?
+                        '<span style="background: #f1f5f9; color: #64748b; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600;">CONCLUÍDA</span>' :
+                        '<span style="background: #e0f2fe; color: #0284c7; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600;">AGENDADA</span>'}
+                                        <span style="background: #f0fdf4; color: #15803d; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600;">
+                                            ${studentMap[lesson.studentId] || 'Aluno Desconhecido'}
+                                        </span>
+                                    </div>
+                                    <h4 style="margin-bottom: 0.5rem; font-size: 1.1rem; color: #1e293b;">${lesson.title}</h4>
+                                    <div style="font-size: 0.9rem; color: #64748b; display: flex; gap: 16px; align-items: center;">
+                                        <span style="display: flex; align-items: center; gap: 6px;"><i data-lucide="calendar" style="width: 14px;"></i> ${lesson.date}</span>
+                                        <span style="display: flex; align-items: center; gap: 6px;"><i data-lucide="clock" style="width: 14px;"></i> ${lesson.time}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+                if (window.lucide) lucide.createIcons();
+
+            } catch (error) {
+                console.error(error);
+                container.innerHTML = `<p style="color: red;">Erro ao carregar aulas: ${error.message}</p>`;
+            }
+        };
+
+        loadLessons();
+    }
 };
