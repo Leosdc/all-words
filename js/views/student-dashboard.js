@@ -94,11 +94,20 @@ export const StudentDashboard = {
             // 2. Fetch Lessons and Teacher Info
             const teacherUid = userData.linkedTeacher;
 
-            // Fetch lessons (usually safe)
-            const lessonsSnapshot = await db.collection('lessons')
-                .where('teacherUid', '==', teacherUid)
-                .where('studentId', '==', userData.studentIdInTeacherDoc || '')
-                .get();
+            // Fetch lessons (Wrap in try-catch to handle "Pending Approval" state)
+            let lessons = [];
+            let isPendingApproval = false;
+
+            try {
+                const lessonsSnapshot = await db.collection('lessons')
+                    .where('teacherUid', '==', teacherUid)
+                    .where('studentId', '==', userData.studentIdInTeacherDoc || '')
+                    .get();
+                lessons = lessonsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            } catch (lessonError) {
+                console.warn("Could not fetch lessons (likely waiting for teacher approval):", lessonError);
+                isPendingApproval = true;
+            }
 
             // Fetch Teacher Profile with Retry (Fix for Race Condition on Permissions)
             let teacherDoc = { exists: false };
@@ -111,15 +120,13 @@ export const StudentDashboard = {
                     teacherDoc = await db.collection('users').doc(teacherUid).get();
                 } catch (err2) {
                     console.error("Retried teacher fetch failed:", err2);
-                    // Fallback: Continue without teacher details (don't crash dashboard)
+                    // Fallback: Continue without teacher details
                 }
             }
 
             const teacherData = teacherDoc.exists ? teacherDoc.data() : {};
             const teacherName = teacherData.displayName || teacherData.name || 'Professor';
             const teacherWhatsapp = teacherData.whatsapp ? teacherData.whatsapp.replace(/\D/g, '') : '';
-
-            let lessons = lessonsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
             // Sort locally (descending by date)
             lessons.sort((a, b) => {
@@ -139,7 +146,7 @@ export const StudentDashboard = {
                 <div class="card-grid" style="grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); margin-bottom: 2rem;">
                     <div class="stat-card">
                         <div class="stat-header"><div class="stat-icon"><i data-lucide="book-open"></i></div></div>
-                        <div class="stat-value">${totalLessons}</div>
+                        <div class="stat-value">${isPendingApproval ? '-' : totalLessons}</div>
                         <div class="stat-label">Aulas no Plano</div>
                     </div>
                     ${teacherWhatsapp ? `
@@ -158,7 +165,16 @@ export const StudentDashboard = {
                 </div>
             `;
 
-            if (lessons.length === 0) {
+            if (isPendingApproval) {
+                contentEl.innerHTML = `
+                    ${statsHtml}
+                    <div style="background: #fffbeb; padding: 3rem; border-radius: 16px; text-align: center; border: 1px solid #fcd34d;">
+                        <i data-lucide="clock" style="width: 48px; height: 48px; color: #d97706; margin-bottom: 1rem;"></i>
+                        <h3 style="color: #92400e;">Aguardando Confirmação</h3>
+                        <p style="color: #b45309; margin-top: 0.5rem;">Seu vínculo foi solicitado com sucesso! <br>Aguarde o professor confirmar seu cadastro para liberar as aulas.</p>
+                    </div>
+                `;
+            } else if (lessons.length === 0) {
                 contentEl.innerHTML = `
                     ${statsHtml}
                     <div style="background: white; padding: 3rem; border-radius: 16px; text-align: center;">
