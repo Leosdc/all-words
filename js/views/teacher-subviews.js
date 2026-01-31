@@ -57,52 +57,53 @@ window.syncStudentsWithUsers = async (event) => {
             const email = (student.email || "").toLowerCase().trim();
             if (!email) continue;
 
-            const userQuery = await db.collection('users').where('email', '==', email).get();
-            if (!userQuery.empty) {
-                const existingUser = userQuery.docs[0];
-                const studentId = student.id;
+            // SECURITY FIX: checking 'student_links' instead of 'users' collection
+            const linkDocRef = db.collection('student_links').doc(email);
+            const linkSnapshot = await linkDocRef.get();
+
+            if (linkSnapshot.exists && linkSnapshot.data().uid) {
+                // CASE A: Student has accepted link and provided their UID
+                const linkData = linkSnapshot.data();
+                const userUid = linkData.uid;
                 foundCount++;
 
                 // 1. Update Global Student record
-                syncPromises.push(db.collection('students').doc(studentId).update({
+                syncPromises.push(db.collection('students').doc(student.id).update({
                     status: 'active',
-                    userUid: existingUser.id
+                    userUid: userUid
                 }));
 
-                // 2. Update Student User profile
-                // Try-catch block to handle permission errors (Teacher can't write to Student Profile directly)
-                try {
-                    await db.collection('users').doc(existingUser.id).update({
-                        linkedTeacher: uid,
-                        studentIdInTeacherDoc: studentId
-                    });
-                } catch (permError) {
-                    console.warn(`Could not update student user profile (expected permission error): ${permError.message}`);
-                    // Swallow error - relying on Student's own login to pick up the 'student_links' and update themselves.
-                }
-
-                // 3. Update ALL existing lessons for this student to include userUid
-                const studentLessons = await db.collection('lessons').where('studentId', '==', studentId).get();
+                // 2. Update ALL existing lessons for this student
+                const studentLessons = await db.collection('lessons').where('studentId', '==', student.id).get();
                 studentLessons.forEach(lDoc => {
-                    syncPromises.push(db.collection('lessons').doc(lDoc.id).update({ userUid: existingUser.id }));
+                    syncPromises.push(db.collection('lessons').doc(lDoc.id).update({ userUid: userUid }));
                 });
 
-                // 4. Create/Update student_link for consistency
-                syncPromises.push(db.collection('student_links').doc(email).set({
+                // 3. Mark link as fully active/confirmed (optional cleanup)
+                syncPromises.push(linkDocRef.update({ status: 'linked', studentId: student.id }));
+
+            } else {
+                // CASE B: Link missing or Student hasn't logged in yet
+                // Create/Refresh the invitation
+                syncPromises.push(linkDocRef.set({
                     teacherUid: uid,
-                    studentId: studentId,
-                    status: 'active',
-                    uid: existingUser.id
+                    studentId: student.id,
+                    status: 'waiting',
+                    name: student.name
                 }, { merge: true }));
             }
         }
 
         if (syncPromises.length > 0) {
             await Promise.all(syncPromises);
-            Toast.show(`${foundCount} aluno(s) vinculado(s) com sucesso!`, 'success');
+            if (foundCount > 0) {
+                Toast.show(`${foundCount} aluno(s) vinculado(s) com sucesso!`, 'success');
+            } else {
+                Toast.show("Solicitações de vínculo enviadas. Aguarde o login dos alunos.", 'info', 4000);
+            }
             fetchStudents(); // Refresh the list
         } else {
-            Toast.show("Nenhum novo vínculo encontrado. Certifique-se de que os alunos já criaram suas contas com o e-mail correto.", 'info', 5000);
+            Toast.show("Todos os alunos já estão sincronizados ou convidados.", 'success');
         }
 
     } catch (error) {
@@ -214,46 +215,36 @@ const addStudentToFirestore = async (student) => {
         await db.collection('students').doc(student.id).set(studentData, { merge: true });
 
         // 2. Check if this student ALREADY has an account (Retroactive Linking)
+        // SECURITY FIX: We can't query 'users' by email. We check 'student_links' instead.
         if (studentEmail) {
-            const userSnapshot = await db.collection('users').where('email', '==', studentEmail).get();
+            const linkDoc = await db.collection('student_links').doc(studentEmail).get();
 
-            if (!userSnapshot.empty) {
-                const existingUserDoc = userSnapshot.docs[0];
-                const existingUserId = existingUserDoc.id;
+            if (linkDoc.exists && linkDoc.data().uid) {
+                // Student already self-registered!
+                const existingUserId = linkDoc.data().uid;
+                console.log("Usuário já existe (via Link). Vinculando:", studentEmail);
 
-                console.log("Usuário já existe. Vinculando retroativamente:", studentEmail);
+                // Update Global Student record
+                await db.collection('students').doc(student.id).set({
+                    status: 'active',
+                    userUid: existingUserId
+                }, { merge: true });
 
-                // Update Global Student record to ACTIVE and link UID
-                await db.collection('students').doc(student.id)
-                    .update({
-                        status: 'active',
-                        userUid: existingUserId
-                    });
-
-                // Update Student's profile record to include teacher link (for dashboard)
-                await db.collection('users').doc(existingUserId).update({
-                    linkedTeacher: uid,
-                    studentIdInTeacherDoc: student.id
-                });
-
-                // Update the link record too
+                // Update the link record to confirm
                 await db.collection('student_links').doc(studentEmail).set({
                     teacherUid: uid,
                     studentId: student.id,
-                    status: 'active',
-                    uid: existingUserId
+                    status: 'linked'
                 }, { merge: true });
 
             } else {
-                // Not registered yet, just create the link for future registration
-                if (student.status === 'waiting') {
-                    await db.collection('student_links').doc(studentEmail).set({
-                        teacherUid: uid,
-                        studentId: student.id,
-                        name: student.name,
-                        status: 'waiting'
-                    }, { merge: true });
-                }
+                // Not registered or not linked yet. Create invitation.
+                await db.collection('student_links').doc(studentEmail).set({
+                    teacherUid: uid,
+                    studentId: student.id,
+                    name: student.name,
+                    status: 'waiting'
+                }, { merge: true });
             }
         }
     } catch (error) {
