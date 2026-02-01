@@ -69,22 +69,29 @@ export const AdminView = {
             const users = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
             listContainer.innerHTML = `
-                <div style="background: white; border-radius: 16px; overflow: hidden; border: 1px solid #e2e8f0;">
-                    <table style="width: 100%; border-collapse: collapse; text-align: left;">
+                <div class="table-container">
+                    <table class="data-table">
                         <thead>
-                            <tr style="background: #f8fafc; border-bottom: 1px solid #e2e8f0;">
-                                <th style="padding: 1.2rem 1.5rem; color: #64748b; font-weight: 600;">Nome</th>
-                                <th style="padding: 1.2rem 1.5rem; color: #64748b; font-weight: 600;">E-mail</th>
-                                <th style="padding: 1.2rem 1.5rem; color: #64748b; font-weight: 600;">Role Atual</th>
-                                <th style="padding: 1.2rem 1.5rem; color: #64748b; font-weight: 600; text-align: right;">Ações</th>
+                            <tr>
+                                <th>Nome</th>
+                                <th>E-mail</th>
+                                <th>Role Atual</th>
+                                <th style="text-align: right;">Ações</th>
                             </tr>
                         </thead>
                         <tbody>
                             ${users.map(user => `
-                                <tr style="border-bottom: 1px solid #f1f5f9;">
-                                    <td style="padding: 1rem 1.5rem; font-weight: 500;">${user.name}</td>
-                                    <td style="padding: 1rem 1.5rem; color: #64748b;">${user.email}</td>
-                                    <td style="padding: 1rem 1.5rem;">
+                                <tr>
+                                    <td>
+                                        <div class="table-user-info">
+                                            <div class="table-avatar" style="width: 32px; height: 32px; font-size: 0.9rem; margin-right: 0.8rem;">
+                                                ${user.name.substring(0, 2).toUpperCase()}
+                                            </div>
+                                            <div style="font-weight: 500;">${user.name}</div>
+                                        </div>
+                                    </td>
+                                    <td style="color: #64748b;">${user.email}</td>
+                                    <td>
                                         <span class="student-status-badge ${user.role === 'admin' ? 'status-active' : (user.role === 'teacher' ? 'status-active' : 'status-waiting')}" 
                                               style="text-transform: capitalize; padding: 0.4rem 0.8rem; border-radius: 8px; font-weight: 600; font-size: 0.8rem; 
                                               ${user.role === 'admin' ? 'background: #fdf2f8; color: #db2777; border: 1px solid #fce7f3;' : ''}
@@ -94,8 +101,8 @@ export const AdminView = {
                                             ${user.role}
                                         </span>
                                     </td>
-                                    <td style="padding: 1rem 1.5rem; text-align: right; display: flex; gap: 0.5rem; justify-content: flex-end;">
-                                        <div class="role-actions-group" style="display: flex; gap: 0.4rem;">
+                                    <td style="text-align: right;">
+                                        <div class="role-actions-group" style="display: flex; gap: 0.4rem; justify-content: flex-end;">
                                             ${user.role !== 'student' ? `
                                                 <button title="Tornar Aluno" class="btn-icon" onclick="window.changeUserRole(event, '${user.id}', 'student')">
                                                     <i data-lucide="user"></i>

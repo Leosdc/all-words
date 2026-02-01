@@ -786,6 +786,68 @@ body:not(.flag-theme) {
     font-size: 0.9rem;
 }
 
+/* --- GENERIC TABLE STYLES --- */
+.table-container {
+    background: white;
+    border-radius: 16px;
+    border: 1px solid #e2e8f0;
+    overflow-x: auto; /* Handles horizontal scroll if table is too wide */
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+}
+
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    text-align: left;
+    white-space: nowrap; /* Prevents awkward wrapping */
+}
+
+.data-table th {
+    background: #f8fafc;
+    padding: 1.2rem 1.5rem;
+    color: #64748b;
+    font-weight: 600;
+    font-size: 0.9rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.data-table td {
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid #f1f5f9;
+    color: var(--dark);
+    vertical-align: middle;
+}
+
+.data-table tr:last-child td {
+    border-bottom: none;
+}
+
+.data-table tr:hover td {
+    background: #f8fafc;
+}
+
+/* Avatar in table */
+.table-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: #e0f2fe;
+    color: var(--primary-blue);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 1rem;
+    margin-right: 1rem;
+}
+
+.table-user-info {
+    display: flex;
+    align-items: center;
+}
+
 /* Global Lucide Icon Fixes */
 i[data-lucide],
 svg.lucide {

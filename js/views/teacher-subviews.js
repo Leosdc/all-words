@@ -165,24 +165,48 @@ const renderStudentGrid = () => {
         `;
     } else {
         contentBody.innerHTML = `
-            <div class="student-grid" id="students-grid-display">
-                ${studentsData.map(student => `
-                    <div class="student-card-item" onclick="window.openStudentDetail('${student.id}')">
-                        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem;">
-                            <div style="width: 48px; height: 48px; background: #e0f2fe; color: var(--primary-blue); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 1.2rem;">
-                                ${student.name.substring(0, 2).toUpperCase()}
-                            </div>
-                            <span class="student-status-badge ${student.status === 'active' ? 'status-active' : (student.status === 'waiting' ? 'status-waiting' : 'status-cancelled')}">
-                                ${student.status === 'active' ? 'Efetivado' : (student.status === 'waiting' ? 'Aguardando' : 'Cancelado')}
-                            </span>
-                        </div>
-                        <h3 style="font-size: 1.1rem; margin-bottom: 0.2rem;">${student.name}</h3>
-                        <p style="font-size: 0.9rem; color: #64748b;">Nível: ${student.level} • ${student.age} anos</p>
-                        <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid #f1f5f9; font-size: 0.85rem; color: #64748b; display: flex; align-items: center; gap: 6px;">
-                            <i data-lucide="target" style="width: 14px;"></i> ${student.reason}
-                        </div>
-                    </div>
-                `).join('')}
+            <div class="table-container">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Aluno</th>
+                            <th>Email</th>
+                            <th>Nível / Idade</th>
+                            <th>Status</th>
+                            <th>Objetivo</th>
+                            <th style="text-align: right;">Ações</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${studentsData.map(student => `
+                            <tr onclick="window.openStudentDetail('${student.id}')" style="cursor: pointer;">
+                                <td>
+                                    <div class="table-user-info">
+                                        <div class="table-avatar">
+                                            ${student.name.substring(0, 2).toUpperCase()}
+                                        </div>
+                                        <div style="font-weight: 500;">${student.name}</div>
+                                    </div>
+                                </td>
+                                <td style="color: #64748b;">${student.email || '-'}</td>
+                                <td>${student.level} • ${student.age} anos</td>
+                                <td>
+                                    <span class="student-status-badge ${student.status === 'active' ? 'status-active' : (student.status === 'waiting' ? 'status-waiting' : 'status-cancelled')}">
+                                        ${student.status === 'active' ? 'Efetivado' : (student.status === 'waiting' ? 'Aguardando' : 'Cancelado')}
+                                    </span>
+                                </td>
+                                <td style="color: #64748b; font-size: 0.9rem;">
+                                    <i data-lucide="target" style="width: 14px; vertical-align: middle; margin-right: 4px;"></i>${student.reason}
+                                </td>
+                                <td style="text-align: right;">
+                                    <button class="btn-icon" style="display: inline-flex;">
+                                        <i data-lucide="chevron-right"></i>
+                                    </button>
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
             </div>
         `;
     }
@@ -359,25 +383,49 @@ export const TeacherStudents = {
                                         <p>Você ainda não tem alunos cadastrados.</p>
                                     </div>
                                 ` : `
-                                    <div class="student-grid" id="students-grid-display">
-                                        <!-- Students rendered here -->
-                                        ${studentsData.map(student => `
-                                            <div class="student-card-item" onclick="window.openStudentDetail('${student.id}')">
-                                                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem;">
-                                                    <div style="width: 48px; height: 48px; background: #e0f2fe; color: var(--primary-blue); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 1.2rem;">
-                                                        ${student.name.substring(0, 2).toUpperCase()}
-                                                    </div>
-                                                    <span class="student-status-badge ${student.status === 'active' ? 'status-active' : (student.status === 'waiting' ? 'status-waiting' : 'status-cancelled')}">
-                                                        ${student.status === 'active' ? 'Efetivado' : (student.status === 'waiting' ? 'Aguardando' : 'Cancelado')}
-                                                    </span>
-                                                </div>
-                                                <h3 style="font-size: 1.1rem; margin-bottom: 0.2rem;">${student.name}</h3>
-                                                <p style="font-size: 0.9rem; color: #64748b;">Nível: ${student.level} • ${student.age} anos</p>
-                                                <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid #f1f5f9; font-size: 0.85rem; color: #64748b; display: flex; align-items: center; gap: 6px;">
-                                                    <i data-lucide="target" style="width: 14px;"></i> ${student.reason}
-                                                </div>
-                                            </div>
-                                        `).join('')}
+                                    <!-- Students rendered here -->
+                                    <div class="table-container">
+                                        <table class="data-table">
+                                            <thead>
+                                                <tr>
+                                                    <th>Aluno</th>
+                                                    <th>Email</th>
+                                                    <th>Nível / Idade</th>
+                                                    <th>Status</th>
+                                                    <th>Objetivo</th>
+                                                    <th style="text-align: right;">Ações</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                ${studentsData.map(student => `
+                                                    <tr onclick="window.openStudentDetail('${student.id}')" style="cursor: pointer;">
+                                                        <td>
+                                                            <div class="table-user-info">
+                                                                <div class="table-avatar">
+                                                                    ${student.name.substring(0, 2).toUpperCase()}
+                                                                </div>
+                                                                <div style="font-weight: 500;">${student.name}</div>
+                                                            </div>
+                                                        </td>
+                                                        <td style="color: #64748b;">${student.email || '-'}</td>
+                                                        <td>${student.level} • ${student.age} anos</td>
+                                                        <td>
+                                                            <span class="student-status-badge ${student.status === 'active' ? 'status-active' : (student.status === 'waiting' ? 'status-waiting' : 'status-cancelled')}">
+                                                                ${student.status === 'active' ? 'Efetivado' : (student.status === 'waiting' ? 'Aguardando' : 'Cancelado')}
+                                                            </span>
+                                                        </td>
+                                                        <td style="color: #64748b; font-size: 0.9rem;">
+                                                            <i data-lucide="target" style="width: 14px; vertical-align: middle; margin-right: 4px;"></i>${student.reason}
+                                                        </td>
+                                                        <td style="text-align: right;">
+                                                            <button class="btn-icon" style="display: inline-flex;">
+                                                                <i data-lucide="chevron-right"></i>
+                                                            </button>
+                                                        </td>
+                                                    </tr>
+                                                `).join('')}
+                                            </tbody>
+                                        </table>
                                     </div>
                                 `}
                             </div>
