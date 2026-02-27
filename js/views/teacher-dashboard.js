@@ -1,7 +1,7 @@
 import { authService } from '../services/auth-service.js';
-import { chatWidget } from '../ui/chat-widget.js';
-import { ProfileModal } from './profile-view.js';
 import { db, auth } from '../config/firebase.js';
+import { Sidebar } from '../ui/sidebar.js';
+import { ProfileModal } from './profile-view.js';
 
 export const TeacherDashboard = {
     render: (user) => {
@@ -9,24 +9,7 @@ export const TeacherDashboard = {
         return `
             <section id="teacher-dashboard-view" class="view active teacher-dash">
                 <div class="dashboard-layout">
-                    <aside class="sidebar">
-                        <div class="logo-text" style="margin-bottom: 3rem; line-height: 1.2;">ALL WORDS<br><span style="font-size: 0.45em; opacity: 0.6; display: block;">${user.role === 'admin' ? 'ADMIN' : 'TEACHER'}</span></div>
-                        <nav>
-                            <div class="nav-item active" id="nav-overview"><i data-lucide="layout-dashboard"></i> Visão Geral</div>
-                            <div class="nav-item" id="nav-students"><i data-lucide="users"></i> Meus Alunos</div>
-                            <div class="nav-item" id="nav-exercises"><i data-lucide="dumbbell"></i> Exercícios</div>
-                            <div class="nav-item" id="nav-formation"><i data-lucide="graduation-cap"></i> Formação</div>
-                            
-                            ${user.role === 'admin' ? `
-                            <div style="margin: 1.5rem 0 0.5rem 1rem; font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em;">Administração</div>
-                            <div class="nav-item" id="nav-admin-users"><i data-lucide="shield-check"></i> Gestão de Roles</div>
-                            ` : ''}
-
-                            <div style="margin-top: auto;"></div>
-                            <div class="nav-item" id="btn-profile"><i data-lucide="user-cog"></i> Editar Perfil</div>
-                            <div class="nav-item" id="btn-logout-teacher"><i data-lucide="log-out"></i> Sair</div>
-                        </nav>
-                    </aside>
+                    ${Sidebar.render(user, 'overview')}
                     <main class="main-content">
                         <div class="header-bar">
                             <h2>Olá, <span id="teacher-name-display">${name}</span>!</h2>
@@ -102,15 +85,8 @@ export const TeacherDashboard = {
         `;
     },
 
-    attachEvents: (navigate) => {
-        document.getElementById('nav-overview').onclick = () => navigate('teacher-dashboard');
-        document.getElementById('nav-students').onclick = () => navigate('teacher-students');
-        document.getElementById('nav-exercises').onclick = () => navigate('teacher-exercises');
-        document.getElementById('nav-formation').onclick = () => navigate('teacher-formation');
-        if (document.getElementById('nav-admin-users')) document.getElementById('nav-admin-users').onclick = () => navigate('admin-dashboard');
-
-        const btnProfile = document.getElementById('btn-profile');
-        if (btnProfile) btnProfile.onclick = () => ProfileModal.open(authService.currentUser);
+    attachEvents: (navigate, user) => {
+        Sidebar.attachEvents(navigate, user.role);
 
         const btnLogout = document.getElementById('btn-logout-teacher');
         if (btnLogout) btnLogout.onclick = () => authService.logout();
@@ -137,14 +113,14 @@ export const TeacherDashboard = {
             if (!user) return;
 
             try {
-                // 1. Fetch Stats (Student counts) from global collection
-                const studentsSnapshot = await db.collection('students').where('teacherUid', '==', user.uid).get();
+                // 1. Fetch Stats (Student counts) from Teacher's students sub-collection
+                const studentsSnapshot = await db.collection('users').doc(user.uid).collection('students').get();
                 const students = studentsSnapshot.docs.map(doc => doc.data());
 
                 const stats = {
                     active: students.filter(s => s.status === 'active').length,
-                    waiting: students.filter(s => s.status === 'waiting' || !s.status).length,
-                    cancelled: students.filter(s => s.status === 'cancelled').length
+                    waiting: students.filter(s => s.status === 'waiting' || s.status === 'waiting_approval' || !s.status).length,
+                    cancelled: students.filter(s => s.status === 'cancelled' || s.status === 'refused').length
                 };
 
                 const statCards = document.querySelectorAll('.stat-card');
@@ -157,6 +133,12 @@ export const TeacherDashboard = {
                 // 2. Fetch Lessons from global collection
                 const snapshot = await db.collection('lessons').where('teacherUid', '==', user.uid).get();
                 let lessons = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+                // Get Student Names map from sub-collection for display
+                const studentNamesMap = {};
+                for (const student of students) {
+                    studentNamesMap[student.id] = student.name;
+                }
 
                 // Sort locally to avoid Firebase Index requirement
                 lessons.sort((a, b) => {
@@ -189,7 +171,7 @@ export const TeacherDashboard = {
                                         </div>
                                         <div>
                                             <div style="font-weight: 600; color: var(--dark);">${lesson.title}</div>
-                                            <div style="font-size: 0.9rem; color: #64748b;">${lesson.studentName || 'Aluno'}</div>
+                                            <div style="font-size: 0.9rem; color: #64748b;">${lesson.studentName || studentNamesMap[lesson.studentId] || 'Aluno'}</div>
                                         </div>
                                     </div>
                                     <div style="text-align: right;">

@@ -3,7 +3,7 @@ import { HomeView } from './views/home-view.js';
 import { LoginView, RegisterView } from './views/auth-views.js';
 import { StudentDashboard } from './views/student-dashboard.js';
 import { TeacherDashboard } from './views/teacher-dashboard.js';
-import { TeacherStudents, TeacherExercises, TeacherFormation } from './views/teacher-subviews.js';
+import { TeacherStudents, TeacherLessons, TeacherExercises, TeacherFormation } from './views/teacher-subviews.js';
 import { ProfileModal } from './views/profile-view.js';
 import { AdminView } from './views/admin-view.js';
 import { modal } from './ui/modal.js';
@@ -23,6 +23,7 @@ window.setIntendedRole = (role) => {
 
 // Router
 const navigate = (viewName) => {
+    window.navigate = navigate; // Expose globally
     console.log('Navigating to:', viewName);
 
     // Hide chat widget temporarily (specific views re-enable it)
@@ -58,6 +59,12 @@ const navigate = (viewName) => {
             attachEventsFn = () => StudentDashboard.attachEvents(navigate);
             break;
 
+        case 'student-agenda':
+            if (!currentUser) return navigate('home');
+            viewHtml = StudentDashboard.renderAgenda(currentUser);
+            attachEventsFn = () => StudentDashboard.attachAgendaEvents(navigate, currentUser);
+            break;
+
         case 'teacher-dashboard':
             if (!currentUser) return navigate('home');
             if (currentUser.role !== 'teacher' && currentUser.role !== 'admin') {
@@ -65,31 +72,37 @@ const navigate = (viewName) => {
                 return navigate('student-dashboard');
             }
             viewHtml = TeacherDashboard.render(currentUser);
-            attachEventsFn = () => TeacherDashboard.attachEvents(navigate);
+            attachEventsFn = () => TeacherDashboard.attachEvents(navigate, currentUser);
             break;
 
         case 'teacher-students':
             if (!currentUser || (currentUser.role !== 'teacher' && currentUser.role !== 'admin')) return navigate('home');
-            viewHtml = TeacherStudents.render();
-            attachEventsFn = () => TeacherStudents.attachEvents(navigate);
+            viewHtml = TeacherStudents.render(currentUser);
+            attachEventsFn = () => TeacherStudents.attachEvents(navigate, currentUser);
+            break;
+
+        case 'teacher-lessons':
+            if (!currentUser || (currentUser.role !== 'teacher' && currentUser.role !== 'admin')) return navigate('home');
+            viewHtml = TeacherLessons.render(currentUser);
+            attachEventsFn = () => TeacherLessons.attachEvents(navigate, currentUser);
             break;
 
         case 'teacher-exercises':
             if (!currentUser || (currentUser.role !== 'teacher' && currentUser.role !== 'admin')) return navigate('home');
-            viewHtml = TeacherExercises.render();
-            attachEventsFn = () => TeacherExercises.attachEvents(navigate);
+            viewHtml = TeacherExercises.render(currentUser);
+            attachEventsFn = () => TeacherExercises.attachEvents(navigate, currentUser);
             break;
 
         case 'teacher-formation':
             if (!currentUser || (currentUser.role !== 'teacher' && currentUser.role !== 'admin')) return navigate('home');
-            viewHtml = TeacherFormation.render();
-            attachEventsFn = () => TeacherFormation.attachEvents(navigate);
+            viewHtml = TeacherFormation.render(currentUser);
+            attachEventsFn = () => TeacherFormation.attachEvents(navigate, currentUser);
             break;
 
         case 'admin-dashboard':
             if (!currentUser || currentUser.role !== 'admin') return navigate('home');
-            viewHtml = AdminView.render();
-            attachEventsFn = () => AdminView.attachEvents(navigate);
+            viewHtml = AdminView.render(currentUser);
+            attachEventsFn = () => AdminView.attachEvents(navigate, currentUser);
             break;
 
         default:
@@ -180,8 +193,8 @@ authService.init((user, role) => {
 // Global Event Delegation for Dynamic Elements
 document.addEventListener('click', (e) => {
     // 1. Logout Handlers
-    if (e.target.closest('#btn-logout-teacher') || e.target.closest('#btn-logout-admin') || e.target.closest('#btn-logout')) {
-        e.preventDefault(); // Prevent default link behavior if any
+    if (e.target.closest('#btn-logout-teacher') || e.target.closest('#btn-logout-admin') || e.target.closest('#btn-logout') || e.target.closest('#btn-logout-common')) {
+        e.preventDefault();
         authService.logout();
         return;
     }

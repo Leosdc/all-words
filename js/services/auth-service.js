@@ -37,6 +37,28 @@ class AuthService {
 
                     if (doc.exists) {
                         const userData = doc.data();
+
+                        // Check if student is approved
+                        if (userData.role === 'student' && userData.status === 'waiting_approval') {
+                            modal.show({
+                                title: 'Aguardando Aprovação',
+                                message: 'Sua conta foi criada com sucesso, mas seu professor ainda não aprovou seu vínculo. Tente novamente mais tarde.',
+                                type: 'warning'
+                            });
+                            auth.signOut();
+                            return;
+                        }
+
+                        if (userData.role === 'student' && userData.status === 'refused') {
+                            modal.show({
+                                title: 'Vínculo Recusado',
+                                message: 'Seu vínculo foi recusado pelo professor ou a conta foi desativada. Entre em contato com o suporte.',
+                                type: 'error'
+                            });
+                            auth.signOut();
+                            return;
+                        }
+
                         this.currentUser = user;
                         this.currentRole = userData.role || 'student';
                         onAuthChange(user, this.currentRole);
@@ -89,7 +111,7 @@ class AuthService {
         }
     }
 
-    async register(name, email, password, role) {
+    async register(name, email, password, role, teacherUid = null) {
         try {
             const userCredential = await auth.createUserWithEmailAndPassword(email, password);
             const user = userCredential.user;
@@ -99,46 +121,89 @@ class AuthService {
                 name: name,
                 email: email.toLowerCase().trim(),
                 role: role,
+                status: (role === 'student' && teacherUid) ? 'waiting_approval' : 'active',
                 createdAt: firebase.firestore.FieldValue.serverTimestamp(),
                 migrationDone: 'v4' // New users don't need migration
             };
 
+            if (role === 'student' && teacherUid) {
+                userDoc.linkedTeacher = teacherUid;
+            }
+
             // Check if there is a pending student link for this email
             const searchEmail = email.toLowerCase().trim();
+            let isLinked = false;
+
             if (role === 'student') {
                 try {
-                    // Find student record in global collection by email
-                    // Note: This might fail if permissions don't allow reading 'students' collection yet
-                    const studentQuery = await db.collection('students').where('email', '==', searchEmail).get();
+                    // 1. Check if there's a pre-registered link from a teacher
+                    const linkDoc = await db.collection('student_links').doc(searchEmail).get();
 
-                    if (!studentQuery.empty) {
-                        const studentDoc = studentQuery.docs[0];
-                        const studentData = studentDoc.data();
+                    if (linkDoc.exists) {
+                        const linkData = linkDoc.data();
+                        const tUid = teacherUid || linkData.teacherUid;
+                        const sId = linkData.studentId;
 
-                        userDoc.linkedTeacher = studentData.teacherUid;
-                        userDoc.studentIdInTeacherDoc = studentDoc.id;
+                        userDoc.linkedTeacher = tUid;
+                        userDoc.studentIdInTeacherDoc = sId;
 
-                        // Update Global Student record to ACTIVE and link UID
-                        // Note: This might fail if permissions are strict
-                        await db.collection('students').doc(studentDoc.id)
-                            .update({
-                                status: 'active',
-                                userUid: user.uid
-                            });
+                        // Update Student record in Teacher's sub-collection
+                        await db.collection('users').doc(tUid).collection('students').doc(sId).update({
+                            status: 'active',
+                            userUid: user.uid
+                        });
+
+                        // Update the link record
+                        await db.collection('student_links').doc(searchEmail).update({
+                            uid: user.uid,
+                            status: 'linked'
+                        });
+
+                        isLinked = true;
                     }
                 } catch (linkError) {
-                    console.warn("Auto-linking failed (likely permission issues). Account will be created anyway.", linkError);
-                    // We continue to create the user. Teacher can sync later.
+                    console.warn("Auto-linking via student_links failed", linkError);
                 }
+
+                // If not linked yet, create a new student record for the selected teacher (in sub-collection)
+                if (!isLinked && teacherUid) {
+                    const studentRef = await db.collection('users').doc(teacherUid).collection('students').add({
+                        name: name,
+                        email: email.toLowerCase().trim(),
+                        status: 'waiting_approval',
+                        teacherUid: teacherUid,
+                        userUid: user.uid,
+                        level: 'Starter',
+                        age: '-',
+                        reason: 'Registro via plataforma',
+                        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                    });
+                    userDoc.studentIdInTeacherDoc = studentRef.id;
+                }
+            }
+
+            let teacherName = 'seu professor';
+            if (teacherUid) {
+                try {
+                    const tDoc = await db.collection('users').doc(teacherUid).get();
+                    if (tDoc.exists) teacherName = tDoc.data().name || tDoc.data().displayName || teacherName;
+                } catch (e) { console.warn("Could not fetch teacher name for modal", e); }
             }
 
             await db.collection('users').doc(user.uid).set(userDoc);
 
-            // Success msg handled by UI or auto-redirect
+            modal.show({
+                title: 'Conta Criada',
+                message: (role === 'student' && teacherUid)
+                    ? `Seu cadastro foi realizado! Agora aguarde a aprovação do professor **${teacherName}**.`
+                    : 'Conta criada com sucesso!',
+                type: 'success'
+            });
+
         } catch (error) {
             let msg = 'Não foi possível criar a conta.';
-            if (error.code === 'auth/email-already-in-use') msg = 'Este e-mail já está em uso.';
-            if (error.code === 'auth/weak-password') msg = 'A senha é muito fraca.';
+            if (error.code === 'auth/email-already-in-use') msg = 'Este e-mail já está em uso. Tente fazer login ou use outro.';
+            if (error.code === 'auth/weak-password') msg = 'A senha é muito fraca (mínimo 6 caracteres).';
 
             modal.show({
                 title: 'Erro no Cadastro',
@@ -151,10 +216,31 @@ class AuthService {
 
     async updateProfile(uid, newData) {
         try {
+            // 1. Update main user document
             await db.collection('users').doc(uid).update(newData);
-            // If name changed, update firebase auth display name too
-            if (newData.name) {
+
+            // 2. Update Firebase Auth displayName if name changed
+            if (newData.name && auth.currentUser) {
                 await auth.currentUser.updateProfile({ displayName: newData.name });
+            }
+
+            // 3. Propagate to Teacher's sub-collection if student
+            const userDoc = await db.collection('users').doc(uid).get();
+            if (userDoc.exists) {
+                const userData = userDoc.data();
+                if (userData.role === 'student' && userData.linkedTeacher && userData.studentIdInTeacherDoc) {
+                    const studentUpdate = {};
+                    if (newData.name) studentUpdate.name = newData.name;
+                    if (newData.whatsapp) studentUpdate.whatsapp = newData.whatsapp;
+
+                    if (Object.keys(studentUpdate).length > 0) {
+                        await db.collection('users')
+                            .doc(userData.linkedTeacher)
+                            .collection('students')
+                            .doc(userData.studentIdInTeacherDoc)
+                            .update(studentUpdate);
+                    }
+                }
             }
         } catch (error) {
             console.error("Error updating profile:", error);
@@ -177,10 +263,16 @@ class AuthService {
                         studentIdInTeacherDoc: data.studentId
                     });
 
-                    // Update link status to 'linked' (optional cleanup, or keep active)
+                    // Update link status to 'linked'
                     await db.collection('student_links').doc(email).update({
                         uid: user.uid,
                         status: 'linked'
+                    });
+
+                    // ALSO: Link userUid in teacher sub-collection to ensure consistency
+                    await db.collection('users').doc(data.teacherUid).collection('students').doc(data.studentId).update({
+                        userUid: user.uid,
+                        status: 'active'
                     });
 
                     console.log("Self-healing: Student linked to teacher successfully.");

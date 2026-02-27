@@ -93,6 +93,22 @@ export const RegisterView = {
                                     <input type="password" id="reg-password" required placeholder="••••••••">
                                 </div>
                             </div>
+                            <div id="teacher-selection-group" style="display: none;">
+                                <div class="input-group">
+                                    <label>Escolha seu Professor</label>
+                                    <div class="custom-select-container" id="custom-teacher-select">
+                                        <div class="custom-select-trigger">
+                                            <i data-lucide="graduation-cap"></i>
+                                            <span class="selected-text">Selecione seu professor</span>
+                                            <i data-lucide="chevron-down" class="arrow"></i>
+                                        </div>
+                                        <div class="custom-select-options" id="teacher-options">
+                                            <div class="select-option disabled">Carregando professores...</div>
+                                        </div>
+                                        <input type="hidden" id="reg-teacher" required>
+                                    </div>
+                                </div>
+                            </div>
                             <button type="submit" class="btn-submit">Cadastrar</button>
                         </form>
                         <div class="auth-footer">
@@ -108,20 +124,114 @@ export const RegisterView = {
         // Back
         document.getElementById('btn-back-reg').onclick = () => navigate('home');
 
+        // Show/Hide Teacher Selection
+        const teacherGroup = document.getElementById('teacher-selection-group');
+        const teacherSelect = document.getElementById('reg-teacher');
+
+        if (intendedRole === 'student') {
+            teacherGroup.style.display = 'block';
+
+            // Fetch Teachers
+            const fetchTeachers = async () => {
+                try {
+                    const { db } = await import('../config/firebase.js');
+                    const snapshot = await db.collection('users').where('role', '==', 'teacher').get();
+                    const teachers = snapshot.docs.map(doc => ({ uid: doc.id, ...doc.data() }));
+
+                    const optionsContainer = document.getElementById('teacher-options');
+                    const triggerText = document.querySelector('#custom-teacher-select .selected-text');
+                    const hiddenInput = document.getElementById('reg-teacher');
+
+                    if (teachers.length === 0) {
+                        optionsContainer.innerHTML = '<div class="select-option disabled">Nenhum professor encontrado</div>';
+                        return;
+                    }
+
+                    optionsContainer.innerHTML = teachers.map(t => `
+                        <div class="select-option" data-value="${t.uid}">
+                            <div class="avatar-mini">${t.name.substring(0, 2).toUpperCase()}</div>
+                            <span>${t.name}</span>
+                        </div>
+                    `).join('');
+
+                    // Add Event Listeners to Options
+                    optionsContainer.querySelectorAll('.select-option').forEach(option => {
+                        option.onclick = (e) => {
+                            e.stopPropagation();
+                            const val = option.dataset.value;
+                            const text = option.querySelector('span').textContent;
+
+                            // Update UI
+                            optionsContainer.querySelectorAll('.select-option').forEach(opt => opt.classList.remove('selected'));
+                            option.classList.add('selected');
+                            triggerText.textContent = text;
+                            hiddenInput.value = val;
+
+                            // Close Dropdown
+                            document.getElementById('custom-teacher-select').classList.remove('open');
+                        };
+                    });
+
+                    if (window.lucide) lucide.createIcons();
+
+                } catch (error) {
+                    console.error("Error fetching teachers:", error);
+                    document.getElementById('teacher-options').innerHTML = '<div class="select-option disabled">Erro ao carregar</div>';
+                }
+            };
+
+            fetchTeachers();
+
+            // Handle Dropdown Toggle
+            const customSelect = document.getElementById('custom-teacher-select');
+            if (customSelect) {
+                customSelect.onclick = (e) => {
+                    e.stopPropagation();
+                    const isOpen = customSelect.classList.contains('open');
+
+                    // Close all other instances if multiple (not yet, but good practice)
+                    customSelect.classList.toggle('open');
+                };
+            }
+
+            // Close on outside click
+            window.addEventListener('click', () => {
+                if (customSelect) customSelect.classList.remove('open');
+            });
+        }
+
         // Link to Login
         document.getElementById('link-login').onclick = (e) => {
             e.preventDefault();
-            navigate('login');
         };
 
         // Form Submit
-        document.getElementById('register-form').onsubmit = async (e) => {
+        const form = document.getElementById('register-form');
+        form.onsubmit = async (e) => {
             e.preventDefault();
+            const btn = form.querySelector('button[type="submit"]');
+            const originalText = btn.innerHTML;
+
             const name = document.getElementById('reg-name').value;
             const email = document.getElementById('reg-email').value;
             const password = document.getElementById('reg-password').value;
+            const teacherUid = intendedRole === 'student' ? document.getElementById('reg-teacher').value : null;
 
-            await authService.register(name, email, password, intendedRole);
+            if (intendedRole === 'student' && !teacherUid) {
+                const { Toast } = await import('../ui/toast.js');
+                Toast.show('Por favor, selecione um professor.', 'warning');
+                return;
+            }
+
+            try {
+                btn.disabled = true;
+                btn.innerHTML = 'Cadastrando...';
+                await authService.register(name, email, password, intendedRole, teacherUid);
+            } catch (err) {
+                console.error("Erro no processo de registro:", err);
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+            }
         };
     }
 };

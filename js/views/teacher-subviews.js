@@ -5,33 +5,9 @@ import { TimePicker } from '../ui/time-picker.js';
 import { modal } from '../ui/modal.js';
 import { Toast } from '../ui/toast.js';
 import { ProfileModal } from './profile-view.js';
+import { Sidebar } from '../ui/sidebar.js';
 
-// Helper for Sidebar (Dry Principle applied manually here for simplicity in this file)
-const getSidebar = (active) => {
-    const role = authService.currentRole;
-    return `
-        <aside class="sidebar">
-            <div class="logo-text" style="margin-bottom: 3rem; line-height: 1.2;">ALL WORDS<br><span style="font-size: 0.45em; opacity: 0.6; display: block;">${role === 'admin' ? 'ADMIN' : 'TEACHER'}</span></div>
-            <nav>
-                <div class="nav-item ${active === 'overview' ? 'active' : ''}" id="nav-overview"><i data-lucide="layout-dashboard"></i> Visão Geral</div>
-                <div class="nav-item ${active === 'lessons' ? 'active' : ''}" id="nav-lessons"><i data-lucide="calendar"></i> Aulas</div>
-                <div class="nav-item ${active === 'students' ? 'active' : ''}" id="nav-students"><i data-lucide="users"></i> Meus Alunos</div>
-                <div class="nav-item ${active === 'exercises' ? 'active' : ''}" id="nav-exercises"><i data-lucide="dumbbell"></i> Exercícios</div>
-                <div class="nav-item ${active === 'formation' ? 'active' : ''}" id="nav-formation"><i data-lucide="graduation-cap"></i> Formação</div>
-                
-                ${role === 'admin' ? `
-                <div style="margin: 1.5rem 0 0.5rem 1rem; font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em;">Administração</div>
-                <div class="nav-item ${active === 'admin' ? 'active' : ''}" id="nav-admin-users"><i data-lucide="shield-check"></i> Gestão de Roles</div>
-                ` : ''}
-
-                <div style="margin-top: auto;"></div>
-                <div style="margin-top: auto;"></div>
-                <div class="nav-item" id="btn-profile"><i data-lucide="user-cog"></i> Editar Perfil</div>
-                <div class="nav-item" id="btn-logout-teacher"><i data-lucide="log-out"></i> Sair</div>
-            </nav>
-        </aside>
-    `;
-};
+// Sidebars are now managed via Sidebar.render()
 
 // --- SYNC STUDENTS WITH USERS ---
 window.syncStudentsWithUsers = async (event) => {
@@ -46,7 +22,7 @@ window.syncStudentsWithUsers = async (event) => {
 
     try {
         console.log("Iniciando sincronização manual de alunos...");
-        const snapshot = await db.collection('students').where('teacherUid', '==', uid).get();
+        const snapshot = await db.collection('users').doc(uid).collection('students').get();
         const students = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
         let foundCount = 0;
@@ -68,8 +44,8 @@ window.syncStudentsWithUsers = async (event) => {
                 const userUid = linkData.uid;
                 foundCount++;
 
-                // 1. Update Global Student record
-                syncPromises.push(db.collection('students').doc(student.id).update({
+                // 1. Update Student record in Sub-collection
+                syncPromises.push(db.collection('users').doc(uid).collection('students').doc(student.id).update({
                     status: 'active',
                     userUid: userUid
                 }));
@@ -119,25 +95,8 @@ window.syncStudentsWithUsers = async (event) => {
     }
 };
 
-const attachSidebarEvents = (navigate) => {
-    document.getElementById('nav-overview').onclick = () => navigate('teacher-dashboard');
-    const navLessons = document.getElementById('nav-lessons');
-    if (navLessons) navLessons.onclick = () => navigate('teacher-lessons');
-    document.getElementById('nav-students').onclick = () => navigate('teacher-students');
-    document.getElementById('nav-exercises').onclick = () => navigate('teacher-exercises');
-    document.getElementById('nav-formation').onclick = () => navigate('teacher-formation');
-
-    const navAdmin = document.getElementById('nav-admin-users');
-    if (navAdmin) navAdmin.onclick = () => navigate('admin-dashboard');
-
-    const btnProfile = document.getElementById('btn-profile');
-    if (btnProfile) btnProfile.onclick = () => ProfileModal.open(authService.currentUser);
-
-    const btnLogout = document.getElementById('btn-logout-teacher');
-    if (btnLogout) btnLogout.onclick = () => authService.logout();
-
-    // Ensure Chat Widget is visible in all teacher sub-views
-    if (window.chatWidget) window.chatWidget.setVisibility(true);
+const attachSidebarEvents = (navigate, role) => {
+    Sidebar.attachEvents(navigate, role);
 };
 
 // Student Data Store (Managed via Firestore)
@@ -152,6 +111,10 @@ const getUserId = () => {
 const renderStudentGrid = () => {
     const listContainer = document.getElementById('student-list-container');
     if (!listContainer) return;
+
+    // Update Title if needed (it might be set in the shell render)
+    const titleEl = listContainer.querySelector('.header-bar h2');
+    if (titleEl) titleEl.textContent = 'Meus Alunos';
 
     const contentBody = listContainer.querySelector('.content-body');
     if (!contentBody) return;
@@ -190,18 +153,33 @@ const renderStudentGrid = () => {
                                 </td>
                                 <td style="color: #64748b;">${student.email || '-'}</td>
                                 <td>${student.level} • ${student.age} anos</td>
-                                <td>
-                                    <span class="student-status-badge ${student.status === 'active' ? 'status-active' : (student.status === 'waiting' ? 'status-waiting' : 'status-cancelled')}">
-                                        ${student.status === 'active' ? 'Efetivado' : (student.status === 'waiting' ? 'Aguardando' : 'Cancelado')}
+                                <td id="status-cell-${student.id}">
+                                    <span class="student-status-badge ${student.status === 'active' ? 'status-active' :
+                (student.status === 'waiting' || student.status === 'waiting_approval' ? 'status-waiting' : 'status-cancelled')
+            }">
+                                        ${student.status === 'active' ? 'Efetivado' :
+                (student.status === 'waiting_approval' ? 'Pendente' :
+                    (student.status === 'waiting' ? 'Aguardando' : 'Cancelado'))}
                                     </span>
                                 </td>
                                 <td style="color: #64748b; font-size: 0.9rem;">
                                     <i data-lucide="target" style="width: 14px; vertical-align: middle; margin-right: 4px;"></i>${student.reason}
                                 </td>
                                 <td style="text-align: right;">
-                                    <button class="btn-icon" style="display: inline-flex;">
-                                        <i data-lucide="chevron-right"></i>
-                                    </button>
+                                    ${student.status === 'waiting' || student.status === 'waiting_approval' ? `
+                                        <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                                            <button class="btn-icon" title="Efetivar Aluno" style="color: #10b981; border-color: #d1fae5;" onclick="event.stopPropagation(); window.approveStudent('${student.id}', '${student.userUid}')">
+                                                <i data-lucide="user-check"></i>
+                                            </button>
+                                            <button class="btn-icon" title="Apagar Registro" style="color: #ef4444; border-color: #fee2e2;" onclick="event.stopPropagation(); window.deleteStudent('${student.id}', '${student.userUid}', '${student.email}')">
+                                                <i data-lucide="trash-2"></i>
+                                            </button>
+                                        </div>
+                                    ` : `
+                                        <button class="btn-icon" style="display: inline-flex;">
+                                            <i data-lucide="chevron-right"></i>
+                                        </button>
+                                    `}
                                 </td>
                             </tr>
                         `).join('')}
@@ -213,13 +191,95 @@ const renderStudentGrid = () => {
     if (window.lucide) lucide.createIcons();
 };
 
+window.approveStudent = async (studentId, userUid) => {
+    if (!confirm('Deseja aprovar o vínculo deste aluno?')) return;
+    const uid = getUserId();
+    try {
+        const batch = db.batch();
+        const studentRef = db.collection('users').doc(uid).collection('students').doc(studentId);
+        batch.update(studentRef, { status: 'active' });
+
+        if (userUid && userUid !== 'undefined') {
+            batch.update(db.collection('users').doc(userUid), { status: 'active' });
+
+            // Also update the link document if it exists
+            const userDoc = await db.collection('users').doc(userUid).get();
+            if (userDoc.exists && userDoc.data().email) {
+                batch.update(db.collection('student_links').doc(userDoc.data().email.toLowerCase().trim()), { status: 'linked' });
+            }
+        }
+
+        await batch.commit();
+        modal.show({ title: 'Sucesso', message: 'Aluno aprovado com sucesso!', type: 'success' });
+        fetchStudents(); // Correct call
+    } catch (error) {
+        console.error("Erro ao aprovar aluno:", error);
+        modal.show({ title: 'Erro', message: 'Erro ao aprovar vínculo.', type: 'error' });
+    }
+};
+
+window.deleteStudent = async (studentId, userUid, email) => {
+    const isWaiting = true; // Based on when this button is shown
+    const msg = 'Deseja apagar este registro? O convite pendente será removido.';
+
+    if (!confirm(msg)) return;
+
+    const uid = getUserId();
+    try {
+        const batch = db.batch();
+        const studentRef = db.collection('users').doc(uid).collection('students').doc(studentId);
+
+        // 1. Delete from Teacher's sub-collection
+        batch.delete(studentRef);
+
+        // 2. Delete/Update student_links
+        if (email && email !== 'undefined' && email !== '-') {
+            batch.delete(db.collection('student_links').doc(email.toLowerCase().trim()));
+        }
+
+        // 3. If there's an actual user ID, we DON'T delete the global user, just the link.
+        // The user stays as a role 'student' but with no teacher link.
+
+        await batch.commit();
+        modal.show({ title: 'Removido', message: 'Registro apagado com sucesso.', type: 'info' });
+        fetchStudents();
+    } catch (error) {
+        console.error("Erro ao apagar aluno:", error);
+        modal.show({ title: 'Erro', message: 'Erro ao apagar registro.', type: 'error' });
+    }
+};
+
+window.rejectStudent = async (studentId, userUid) => {
+    if (!confirm('Deseja recusar este aluno? O acesso dele será bloqueado.')) return;
+    const uid = getUserId();
+    try {
+        const batch = db.batch();
+        const studentRef = db.collection('users').doc(uid).collection('students').doc(studentId);
+        batch.update(studentRef, { status: 'refused' });
+        if (userUid && userUid !== 'undefined') {
+            batch.update(db.collection('users').doc(userUid), { status: 'refused' });
+
+            const userDoc = await db.collection('users').doc(userUid).get();
+            if (userDoc.exists && userDoc.data().email) {
+                batch.update(db.collection('student_links').doc(userDoc.data().email.toLowerCase().trim()), { status: 'refused' });
+            }
+        }
+        await batch.commit();
+        modal.show({ title: 'Recusado', message: 'Vínculo recusado.', type: 'info' });
+        fetchStudents(); // Correct call
+    } catch (error) {
+        console.error("Erro ao recusar aluno:", error);
+        modal.show({ title: 'Erro', message: 'Erro ao processar recusa.', type: 'error' });
+    }
+};
+
 // Fetch Students from Firestore
 const fetchStudents = async () => {
     const uid = getUserId();
     if (!uid) return;
 
     try {
-        const snapshot = await db.collection('students').where('teacherUid', '==', uid).get();
+        const snapshot = await db.collection('users').doc(uid).collection('students').get();
         studentsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
         // Update DOM directly instead of full navigate/render loop
@@ -236,54 +296,57 @@ const addStudentToFirestore = async (student) => {
 
     try {
         const studentEmail = (student.email || "").toLowerCase().trim();
+        const batch = db.batch();
 
-        // 1. Save in Global 'students' collection
+        // 1. Save in Teacher's 'students' sub-collection
         const studentData = { ...student, teacherUid: uid };
-        await db.collection('students').doc(student.id).set(studentData, { merge: true });
+        const studentRef = db.collection('users').doc(uid).collection('students').doc(student.id);
+        batch.set(studentRef, studentData, { merge: true });
 
-        // 2. Check if this student ALREADY has an account (Retroactive Linking)
-        // SECURITY FIX: We can't query 'users' by email. We check 'student_links' instead.
+        // 2. Sync with global user doc and student_links
         if (studentEmail) {
+            // Check link source
             const linkDoc = await db.collection('student_links').doc(studentEmail).get();
+            const linkData = linkDoc.exists ? linkDoc.data() : null;
+            const userUid = student.userUid || (linkData ? linkData.uid : null);
 
-            if (linkDoc.exists && linkDoc.data().uid) {
-                // Student already self-registered!
-                const existingUserId = linkDoc.data().uid;
-                console.log("Usuário já existe (via Link). Vinculando:", studentEmail);
+            if (userUid) {
+                // If student is becoming 'active', update global user status to unlock LOGIN
+                if (student.status === 'active') {
+                    batch.update(db.collection('users').doc(userUid), { status: 'active' });
+                } else if (student.status === 'cancelled' || student.status === 'refused') {
+                    batch.update(db.collection('users').doc(userUid), { status: 'refused' });
+                }
 
-                // Update Global Student record
-                await db.collection('students').doc(student.id).set({
-                    status: 'active',
-                    userUid: existingUserId
-                }, { merge: true });
-
-                // Update the link record to confirm
-                await db.collection('student_links').doc(studentEmail).set({
+                // Update link record
+                batch.update(db.collection('student_links').doc(studentEmail), {
+                    status: student.status === 'active' ? 'linked' : 'refused',
                     teacherUid: uid,
-                    studentId: student.id,
-                    status: 'linked'
-                }, { merge: true });
-
+                    studentId: student.id
+                });
             } else {
-                // Not registered or not linked yet. Create invitation.
-                await db.collection('student_links').doc(studentEmail).set({
+                // Not registered yet, update invitation link
+                batch.set(db.collection('student_links').doc(studentEmail), {
                     teacherUid: uid,
                     studentId: student.id,
                     name: student.name,
-                    status: 'waiting'
+                    status: (student.status === 'active' || student.status === 'waiting' || student.status === 'waiting_approval') ? 'waiting' : 'refused'
                 }, { merge: true });
             }
         }
+
+        await batch.commit();
     } catch (error) {
         console.error("Error saving student:", error);
     }
 };
 
 // Update Student in Firestore
-// Update Student in Firestore
 const updateStudentInFirestore = async (student) => {
+    const uid = getUserId();
+    if (!uid) return;
     try {
-        await db.collection('students').doc(student.id).update(student);
+        await db.collection('users').doc(uid).collection('students').doc(student.id).update(student);
     } catch (error) {
         console.error("Error updating student:", error);
     }
@@ -354,14 +417,15 @@ const deleteLessonFromFirestore = async (studentId, lessonId) => {
 };
 
 export const TeacherStudents = {
-    render: () => {
+    render: (user) => {
+        const role = user.role || 'teacher';
         return `
             <section id="teacher-students-view" class="view active teacher-dash">
                 <style>
                     /* Inline dirty fix for modal z-index if needed, though css file handles it */
                 </style>
                 <div class="dashboard-layout">
-                    ${getSidebar('students')}
+                    ${Sidebar.render(user, 'students')}
                     <main class="main-content">
                         <!-- LIST VIEW -->
                         <div id="student-list-container">
@@ -377,57 +441,11 @@ export const TeacherStudents = {
                                 </div>
                             </div>
                             <div class="content-body">
-                                ${studentsData.length === 0 ? `
-                                    <div style="background: white; padding: 2rem; border-radius: 16px; text-align: center; color: #64748b;">
-                                        <i data-lucide="users" style="width: 48px; height: 48px; opacity: 0.5; margin-bottom: 1rem;"></i>
-                                        <p>Você ainda não tem alunos cadastrados.</p>
-                                    </div>
-                                ` : `
-                                    <!-- Students rendered here -->
-                                    <div class="table-container">
-                                        <table class="data-table">
-                                            <thead>
-                                                <tr>
-                                                    <th>Aluno</th>
-                                                    <th>Email</th>
-                                                    <th>Nível / Idade</th>
-                                                    <th>Status</th>
-                                                    <th>Objetivo</th>
-                                                    <th style="text-align: right;">Ações</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                ${studentsData.map(student => `
-                                                    <tr onclick="window.openStudentDetail('${student.id}')" style="cursor: pointer;">
-                                                        <td>
-                                                            <div class="table-user-info">
-                                                                <div class="table-avatar">
-                                                                    ${student.name.substring(0, 2).toUpperCase()}
-                                                                </div>
-                                                                <div style="font-weight: 500;">${student.name}</div>
-                                                            </div>
-                                                        </td>
-                                                        <td style="color: #64748b;">${student.email || '-'}</td>
-                                                        <td>${student.level} • ${student.age} anos</td>
-                                                        <td>
-                                                            <span class="student-status-badge ${student.status === 'active' ? 'status-active' : (student.status === 'waiting' ? 'status-waiting' : 'status-cancelled')}">
-                                                                ${student.status === 'active' ? 'Efetivado' : (student.status === 'waiting' ? 'Aguardando' : 'Cancelado')}
-                                                            </span>
-                                                        </td>
-                                                        <td style="color: #64748b; font-size: 0.9rem;">
-                                                            <i data-lucide="target" style="width: 14px; vertical-align: middle; margin-right: 4px;"></i>${student.reason}
-                                                        </td>
-                                                        <td style="text-align: right;">
-                                                            <button class="btn-icon" style="display: inline-flex;">
-                                                                <i data-lucide="chevron-right"></i>
-                                                            </button>
-                                                        </td>
-                                                    </tr>
-                                                `).join('')}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                `}
+                                <!-- Initial empty state or loading, actual list rendered by renderStudentGrid() -->
+                                <div style="text-align: center; padding: 3rem; color: #64748b;">
+                                    <i class="lucide-spinner" style="width: 32px; height: 32px; animation: spin 1s linear infinite; opacity: 0.5;"></i>
+                                    <p style="margin-top: 1rem;">Carregando alunos...</p>
+                                </div>
                             </div>
                         </div>
 
@@ -876,7 +894,8 @@ export const TeacherStudents = {
 
         // Helper to render skill block
         function renderSkillBlock(student, skillKey, label) {
-            const skill = student.skills[skillKey] || { rating: 0, notes: '' };
+            const skills = student.skills || {};
+            const skill = skills[skillKey] || { rating: 0, notes: '' };
             return `
                 <div class="skill-rating-container">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
@@ -900,10 +919,11 @@ export const TeacherStudents = {
                     const value = parseInt(e.target.dataset.value); // Simple 1-5 for now, half stars require more complex UI logic or click position
 
                     // Update Local Data
-                    if (student.skills[skillKey]) {
-                        student.skills[skillKey].rating = value;
-                        updateStudentInFirestore(student);
-                    }
+                    if (!student.skills) student.skills = {};
+                    if (!student.skills[skillKey]) student.skills[skillKey] = { rating: 0, notes: '' };
+
+                    student.skills[skillKey].rating = value;
+                    updateStudentInFirestore(student);
 
                     // Re-render detail view to show valid stars
                     window.openStudentDetail(student.id);
@@ -914,7 +934,9 @@ export const TeacherStudents = {
         // Helper to update notes
         window.updateSkillNote = (id, skillKey, value) => {
             const s = studentsData.find(st => st.id === id);
-            if (s && s.skills[skillKey]) {
+            if (s) {
+                if (!s.skills) s.skills = {};
+                if (!s.skills[skillKey]) s.skills[skillKey] = { rating: 0, notes: '' };
                 s.skills[skillKey].notes = value;
                 updateStudentInFirestore(s);
             }
@@ -1333,11 +1355,11 @@ export const TeacherStudents = {
 };
 
 export const TeacherExercises = {
-    render: () => {
+    render: (user) => {
         return `
             <section id="teacher-exercises-view" class="view active teacher-dash">
                 <div class="dashboard-layout">
-                    ${getSidebar('exercises')}
+                    ${Sidebar.render(user, 'exercises')}
                     <main class="main-content">
                         <div class="header-bar">
                             <h2>Catálogo de Exercícios</h2>
@@ -1386,15 +1408,15 @@ export const TeacherExercises = {
             </section>
         `;
     },
-    attachEvents: (navigate) => attachSidebarEvents(navigate)
+    attachEvents: (navigate, user) => attachSidebarEvents(navigate, user.role)
 };
 
 export const TeacherFormation = {
-    render: () => {
+    render: (user) => {
         return `
             <section id="teacher-formation-view" class="view active teacher-dash">
                 <div class="dashboard-layout">
-                    ${getSidebar('formation')}
+                    ${Sidebar.render(user, 'formation')}
                     <main class="main-content">
                         <div class="header-bar">
                             <h2>Plano de Ensino e Metodologia</h2>
@@ -1442,18 +1464,18 @@ export const TeacherFormation = {
             </section>
         `;
     },
-    attachEvents: (navigate) => attachSidebarEvents(navigate)
+    attachEvents: (navigate, user) => attachSidebarEvents(navigate, user.role)
 };
 
 export const TeacherLessons = {
-    render: () => {
+    render: (user) => {
         return `
             <section id="teacher-lessons-view" class="view active teacher-dash">
                 <div class="dashboard-layout">
-                    ${getSidebar('lessons')}
+                    ${Sidebar.render(user, 'lessons')}
                     <main class="main-content">
                         <div class="header-bar">
-                            <h2>Minhas Aulas</h2>
+                            <h2>Minha Agenda</h2>
                             <button class="btn-primary" id="btn-add-lesson-global"><i data-lucide="plus"></i> Nova Aula</button>
                         </div>
                         <div class="content-body" id="lessons-list-container">
@@ -1467,8 +1489,8 @@ export const TeacherLessons = {
             </section>
         `;
     },
-    attachEvents: (navigate) => {
-        attachSidebarEvents(navigate);
+    attachEvents: (navigate, user) => {
+        attachSidebarEvents(navigate, user.role);
 
         const btnAdd = document.getElementById('btn-add-lesson-global');
         if (btnAdd) {
@@ -1511,22 +1533,29 @@ export const TeacherLessons = {
                 // Fetch student names (optimized in chunks if needed, but simple loop fine for now)
                 for (const sid of studentIds) {
                     try {
-                        const sDoc = await db.collection('students').doc(sid).get();
+                        const sDoc = await db.collection('users').doc(uid).collection('students').doc(sid).get();
                         if (sDoc.exists) studentMap[sid] = sDoc.data().name;
                     } catch (e) { }
                 }
 
                 container.innerHTML = `
                     <div style="display: grid; gap: 1rem;">
-                        ${lessons.map(lesson => `
-                            <div class="lesson-card" style="background: white; padding: 1.5rem; border-radius: 12px; border: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center;">
+                        ${lessons.map(lesson => {
+                    const isPast = new Date(lesson.date + 'T' + (lesson.time || '00:00')) < new Date();
+                    const studentName = lesson.studentName || studentMap[lesson.studentId] || 'Aluno Desconhecido';
+                    const isReinforcement = lesson.type === 'reinforcement';
+
+                    return `
+                            <div class="lesson-card" style="background: white; padding: 1.5rem; border-radius: 12px; border: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
                                 <div>
-                                    <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
-                                        ${new Date(lesson.date + 'T' + (lesson.time || '00:00')) < new Date() ?
-                        '<span style="background: #f1f5f9; color: #64748b; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600;">CONCLUÍDA</span>' :
-                        '<span style="background: #e0f2fe; color: #0284c7; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600;">AGENDADA</span>'}
+                                    <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem; flex-wrap: wrap;">
+                                        ${isPast ?
+                            '<span style="background: #f1f5f9; color: #64748b; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600;">CONCLUÍDA</span>' :
+                            '<span style="background: #e0f2fe; color: #0284c7; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600;">AGENDADA</span>'}
+                                        ${isReinforcement ?
+                            '<span style="background: #fef9c3; color: #a16207; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; border: 1px solid #fef08a;">REFORÇO</span>' : ''}
                                         <span style="background: #f0fdf4; color: #15803d; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600;">
-                                            ${studentMap[lesson.studentId] || 'Aluno Desconhecido'}
+                                            <i data-lucide="user" style="width: 10px; margin-right: 4px;"></i> ${studentName}
                                         </span>
                                     </div>
                                     <h4 style="margin-bottom: 0.5rem; font-size: 1.1rem; color: #1e293b;">${lesson.title}</h4>
@@ -1536,7 +1565,8 @@ export const TeacherLessons = {
                                     </div>
                                 </div>
                             </div>
-                        `).join('')}
+                        `;
+                }).join('')}
                     </div>
                 `;
                 if (window.lucide) lucide.createIcons();

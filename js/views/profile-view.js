@@ -5,47 +5,68 @@ export const ProfileModal = {
     render: (user) => {
         return `
             <div class="modal-overlay" id="profile-modal">
-                <div class="modal-content" style="max-width: 500px;">
+                <div class="modal-content" style="max-width: 500px; text-align: left;">
                     <button class="modal-close" id="close-profile-modal">&times;</button>
                     
-                    <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 2rem;">
-                        <div style="width: 64px; height: 64px; background: #e0f2fe; color: #0284c7; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; font-weight: bold;">
+                    <div style="display: flex; align-items: center; gap: 1.25rem; margin-bottom: 2.5rem; background: #f8fafc; padding: 1.5rem; border-radius: 16px; border: 1px solid #e2e8f0;">
+                        <div style="width: 72px; height: 72px; background: white; color: var(--primary-blue); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.8rem; font-weight: 700; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); border: 2px solid #e0f2fe;">
                             ${(user.displayName || user.email || 'U')[0].toUpperCase()}
                         </div>
                         <div>
-                            <h2 style="margin: 0; font-size: 1.5rem;">Editar Perfil</h2>
-                            <p style="color: #64748b; margin: 0;">${user.email}</p>
+                            <h2 style="margin: 0; font-size: 1.6rem; color: var(--dark); font-weight: 700;">Editar Perfil</h2>
+                            <p style="color: #64748b; margin: 0; font-size: 1rem; font-weight: 500;">${user.email}</p>
                         </div>
                     </div>
 
-                    <form id="profile-form" style="display: flex; flex-direction: column; gap: 1.5rem;">
-                        <div class="form-group">
+                    <form id="profile-form" style="display: flex; flex-direction: column; gap: 1.25rem;">
+                        <div class="input-group">
                             <label>Nome Completo</label>
-                            <input type="text" id="profile-name" value="${user.displayName || ''}" placeholder="Seu nome" required>
-                        </div>
-
-                        <div class="form-group">
-                            <label>WhatsApp</label>
-                            <input type="tel" id="profile-whatsapp" value="${user.whatsapp || ''}" placeholder="(DDD) 99999-9999">
-                            <small style="color: #94a3b8; font-size: 0.85rem;">Usado para comunicações importantes.</small>
-                        </div>
-
-                        <div style="border-top: 1px solid #e2e8f0; padding-top: 1.5rem; margin-top: 0.5rem;">
-                            <h3 style="font-size: 1.1rem; margin-bottom: 1rem;">Segurança</h3>
-                            <button type="button" class="btn-secondary" id="btn-toggle-password" style="width: 100%;">Adobe Alterar Senha</button>
-                            
-                            <div id="password-section" style="display: none; margin-top: 1rem; background: #f8fafc; padding: 1rem; border-radius: 8px;">
-                                <div class="form-group" style="margin-bottom: 1rem;">
-                                    <label>Nova Senha</label>
-                                    <input type="password" id="new-password" placeholder="Mínimo 6 caracteres">
-                                </div>
-                                <button type="button" class="btn-danger" id="btn-save-password">Atualizar Senha</button>
+                            <div class="input-wrapper">
+                                <i data-lucide="user"></i>
+                                <input type="text" id="profile-name" value="${user.displayName || ''}" placeholder="Como devemos te chamar?" required>
                             </div>
                         </div>
 
-                        <div style="display: flex; justify-content: flex-end; gap: 1rem; margin-top: 1rem;">
-                            <button type="button" class="btn-secondary" id="btn-cancel-profile">Cancelar</button>
-                            <button type="submit" class="btn-primary">Salvar Alterações</button>
+                        <div class="input-group">
+                            <label>WhatsApp (Opcional)</label>
+                            <div class="input-wrapper">
+                                <i data-lucide="phone"></i>
+                                <input type="tel" id="profile-whatsapp" value="${user.whatsapp || ''}" placeholder="(DDD) 99999-9999">
+                            </div>
+                            <small style="color: #94a3b8; font-size: 0.8rem; margin-top: 0.4rem; display: block; padding-left: 0.5rem;">Usado para avisos de aulas e suporte.</small>
+                        </div>
+
+                        <div style="padding-top: 1rem; margin-top: 0.5rem;">
+                            <h3 style="font-size: 1.1rem; margin-bottom: 1rem; color: var(--dark); display: flex; align-items: center; gap: 0.5rem;">
+                                <i data-lucide="shield-lock" style="width: 18px;"></i> Segurança
+                            </h3>
+                            <button type="button" class="btn-secondary" id="btn-toggle-password" 
+                                style="width: 100%; padding: 0.8rem; border-radius: 12px; color: var(--dark); border-color: #cbd5e1; background: white; font-size: 0.95rem;">
+                                Alterar Senha de Acesso
+                            </button>
+                            
+                            <div id="password-section" style="display: none; margin-top: 1rem; background: #f1f5f9; padding: 1.25rem; border-radius: 16px; border: 1px solid #e2e8f0;">
+                                <div class="input-group" style="margin-bottom: 1rem;">
+                                    <label>Nova Senha</label>
+                                    <div class="input-wrapper" style="background: white;">
+                                        <i data-lucide="key"></i>
+                                        <input type="password" id="new-password" placeholder="Mínimo 6 caracteres">
+                                    </div>
+                                </div>
+                                <button type="button" class="btn-submit" id="btn-save-password" style="margin-top: 0; padding: 0.8rem; background: var(--dark); font-size: 0.95rem;">
+                                    Confirmar Nova Senha
+                                </button>
+                            </div>
+                        </div>
+
+                        <div style="display: grid; grid-template-columns: 1fr 1.5fr; gap: 1rem; margin-top: 1.5rem;">
+                            <button type="button" class="btn-secondary" id="btn-cancel-profile" 
+                                style="padding: 1rem; border-radius: 16px; color: #64748b; background: #f8fafc; border: 1px solid #e2e8f0;">
+                                Cancelar
+                            </button>
+                            <button type="submit" class="btn-primary" style="padding: 1rem; border-radius: 16px; box-shadow: 0 4px 12px rgba(14, 165, 233, 0.25);">
+                                Salvar Alterações
+                            </button>
                         </div>
                     </form>
                 </div>
@@ -66,6 +87,12 @@ export const ProfileModal = {
         const modalEl = doc.body.firstChild;
         modalEl.classList.add('profile-modal-instance'); // Add marker class
         document.body.appendChild(modalEl);
+
+        // Required to trigger CSS transitions
+        setTimeout(() => {
+            modalEl.classList.add('active');
+            if (window.lucide) lucide.createIcons({ root: modalEl });
+        }, 10);
 
         // Mask Logic
         const phoneInput = document.getElementById('profile-whatsapp');
