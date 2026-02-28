@@ -7,6 +7,8 @@ import { TimePicker } from '../ui/time-picker.js';
 import { Toast } from '../ui/toast.js';
 import { modal } from '../ui/modal.js';
 
+let currentLessons = [];
+
 export const StudentDashboard = {
     render: (user) => {
         const name = user.displayName || user.email.split('@')[0];
@@ -27,6 +29,30 @@ export const StudentDashboard = {
                             </div>
                         </div>
                     </main>
+                </div>
+
+                <!-- Lesson Detail Modal -->
+                <div id="lesson-detail-modal" class="form-modal-overlay">
+                    <div class="form-modal" style="max-width: 500px;">
+                        <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 2rem;">
+                            <div>
+                                <h2 id="detail-title" style="font-size: 1.5rem; color: var(--dark); margin-bottom: 0.5rem;">Aula</h2>
+                                <p id="detail-subtitle" style="color: #64748b; font-size: 0.9rem;"></p>
+                            </div>
+                            <button onclick="document.getElementById('lesson-detail-modal').classList.remove('active')" 
+                                    style="background: #f1f5f9; border: none; padding: 8px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s;">
+                                <i data-lucide="x" style="width: 20px; height: 20px; color: #64748b;"></i>
+                            </button>
+                        </div>
+
+                        <div id="lesson-detail-content" style="display: grid; gap: 1.5rem;">
+                            <!-- Content injected here -->
+                        </div>
+
+                        <div style="margin-top: 2.5rem; pt: 1.5rem; border-top: 1px solid #f1f5f9;">
+                            <button class="btn-primary" onclick="document.getElementById('lesson-detail-modal').classList.remove('active')" style="width: 100%;">Fechar</button>
+                        </div>
+                    </div>
                 </div>
             </section>
         `;
@@ -55,39 +81,61 @@ export const StudentDashboard = {
         StudentDashboard.fetchTeacherData(user, false);
     },
 
-    fetchTeacherData: async (user, showAllLessons = false) => {
+    fetchTeacherData: async (user, showAllLessons = false, recursionDepth = 0) => {
         if (!user) return;
+        if (recursionDepth > 3) {
+            console.error("Infinite recursion detected in fetchTeacherData");
+            return;
+        }
 
         const contentEl = document.getElementById('student-content-display');
         if (!contentEl) return;
-
         try {
+            console.log("Fetching student data for:", user.uid, "depth:", recursionDepth);
             // 1. Get User Profile to find linkedTeacher
             const userDoc = await db.collection('users').doc(user.uid).get();
-            const userData = userDoc.data();
+            const userData = userDoc.exists ? userDoc.data() : null;
 
-            if (!userData || !userData.linkedTeacher) {
+            if (!userData) {
+                console.error("User document not found for:", user.uid);
+                contentEl.innerHTML = `<p>Perfil de usuário não encontrado. Tente sair e entrar novamente.</p>`;
+                return;
+            }
+
+            console.log("User Data status:", userData.status, "Teacher:", userData.linkedTeacher);
+
+            if (!userData.linkedTeacher) {
                 // Self-healing: Check if there's a student_link that wasn't applied
+                console.log("Teacher link missing, checking student_links...");
                 const linkDoc = await db.collection('student_links').doc(user.email.toLowerCase()).get();
                 if (linkDoc.exists) {
                     const linkData = linkDoc.data();
-                    console.log("Found missing link, applying self-healing...");
+                    console.log("Found missing link, applying self-healing...", linkData);
 
-                    // Update User Profile
-                    await db.collection('users').doc(user.uid).update({
-                        linkedTeacher: linkData.teacherUid,
-                        studentIdInTeacherDoc: linkData.studentId
-                    });
-
-                    // Update Student record in Teacher's Sub-collection
-                    await db.collection('users').doc(linkData.teacherUid).collection('students').doc(linkData.studentId)
-                        .update({
-                            status: 'active',
-                            userUid: user.uid
+                    if (linkData.teacherUid && linkData.studentId) {
+                        // Update User Profile
+                        await db.collection('users').doc(user.uid).update({
+                            linkedTeacher: linkData.teacherUid,
+                            studentIdInTeacherDoc: linkData.studentId,
+                            status: 'active'
                         });
 
-                    // Reload data
-                    return StudentDashboard.fetchTeacherData(user, showAllLessons);
+                        // Update Student record in Teacher's Sub-collection
+                        // We try-catch this because we might not have permission, but it's okay if it fails
+                        // as long as the user's global doc is updated.
+                        try {
+                            await db.collection('users').doc(linkData.teacherUid).collection('students').doc(linkData.studentId)
+                                .update({
+                                    status: 'active',
+                                    userUid: user.uid
+                                });
+                        } catch (e) {
+                            console.warn("Could not update teacher's student record (expected if permissions are tight):", e);
+                        }
+
+                        // Reload data with recursion protection
+                        return StudentDashboard.fetchTeacherData(user, showAllLessons, recursionDepth + 1);
+                    }
                 }
 
                 contentEl.innerHTML = `
@@ -103,30 +151,40 @@ export const StudentDashboard = {
 
             // 2. Fetch Lessons and Teacher Info
             const teacherUid = userData.linkedTeacher;
+            const studentId = userData.studentIdInTeacherDoc || '';
 
             // Fetch lessons
             let lessons = [];
             let isPendingApproval = false;
 
             try {
-                const lessonsSnapshot = await db.collection('lessons')
-                    .where('teacherUid', '==', teacherUid)
-                    .where('studentId', '==', userData.studentIdInTeacherDoc || '')
-                    .get();
-                lessons = lessonsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                if (studentId) {
+                    const lessonsSnapshot = await db.collection('lessons')
+                        .where('teacherUid', '==', teacherUid)
+                        .where('studentId', '==', studentId)
+                        .get();
+                    lessons = lessonsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    currentLessons = lessons;
+                } else {
+                    console.warn("No studentIdInTeacherDoc found for student");
+                }
             } catch (lessonError) {
                 console.warn("Could not fetch lessons:", lessonError);
                 isPendingApproval = true;
             }
 
-            // Fetch Teacher Profile with Retry
+            // Fetch Teacher Profile with Timeout/Retry
             let teacherDoc = { exists: false };
             try {
                 teacherDoc = await db.collection('users').doc(teacherUid).get();
             } catch (err) {
                 console.warn("Teacher fetch failed, retrying...");
                 await new Promise(r => setTimeout(r, 800));
-                teacherDoc = await db.collection('users').doc(teacherUid).get();
+                try {
+                    teacherDoc = await db.collection('users').doc(teacherUid).get();
+                } catch (e2) {
+                    console.error("Second teacher fetch attempt failed:", e2);
+                }
             }
 
             const teacherData = teacherDoc.exists ? teacherDoc.data() : {};
@@ -148,22 +206,29 @@ export const StudentDashboard = {
             });
 
             const statsHtml = `
-                    <div class="stat-card" style="cursor: pointer; background: var(--bg-primary); border: 1px solid var(--primary-color);" id="btn-agenda-shortcut">
-                        <div class="stat-header"><div class="stat-icon" style="background: white; color: var(--primary-color);"><i data-lucide="calendar-plus"></i></div></div>
-                        <div class="stat-value" style="font-size: 1.2rem; margin-top: 0.5rem; color: var(--primary-color);">Agendar Aula</div>
-                        <div class="stat-label">Novo horário de reforço</div>
+                <div style="display: flex; flex-direction: column; gap: 1.25rem; margin-bottom: 2.5rem;">
+                    <div class="stat-card" style="cursor: pointer; background: var(--bg-primary); border: 1px solid var(--primary-color); display: flex; align-items: center; padding: 1.5rem; gap: 1.5rem;" id="btn-agenda-shortcut">
+                        <div class="stat-icon" style="background: white; color: var(--primary-color); width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;"><i data-lucide="calendar-plus"></i></div>
+                        <div>
+                            <div class="stat-value" style="font-size: 1.1rem; font-weight: 600; color: var(--primary-color);">Agendar Aula</div>
+                            <div class="stat-label" style="font-size: 0.85rem; color: #64748b;">Novo horário de reforço</div>
+                        </div>
                     </div>
                     ${teacherWhatsapp ? `
-                    <div class="stat-card" style="cursor: pointer;" onclick="window.open('https://wa.me/55${teacherWhatsapp}', '_blank')">
-                        <div class="stat-header"><div class="stat-icon" style="background: #dcfce7; color: #16a34a;"><i data-lucide="message-circle"></i></div></div>
-                        <div class="stat-value" style="font-size: 1.2rem; margin-top: 0.5rem;">${teacherName}</div>
-                        <div class="stat-label">Falar no WhatsApp</div>
+                    <div class="stat-card" style="cursor: pointer; display: flex; align-items: center; padding: 1.5rem; gap: 1.5rem;" onclick="window.open('https://wa.me/55${teacherWhatsapp}', '_blank')">
+                        <div class="stat-icon" style="background: #dcfce7; color: #16a34a; width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;"><i data-lucide="message-circle"></i></div>
+                        <div>
+                            <div class="stat-value" style="font-size: 1.1rem; font-weight: 600;">${teacherName}</div>
+                            <div class="stat-label" style="font-size: 0.85rem; color: #64748b;">Falar no WhatsApp</div>
+                        </div>
                     </div>
                      ` : `
-                    <div class="stat-card">
-                        <div class="stat-header"><div class="stat-icon"><i data-lucide="user"></i></div></div>
-                        <div class="stat-value" style="font-size: 1.2rem; margin-top: 0.5rem;">${teacherName}</div>
-                        <div class="stat-label">Seu Professor</div>
+                    <div class="stat-card" style="display: flex; align-items: center; padding: 1.5rem; gap: 1.5rem;">
+                        <div class="stat-icon" style="background: #f1f5f9; color: #64748b; width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;"><i data-lucide="user"></i></div>
+                        <div>
+                            <div class="stat-value" style="font-size: 1.1rem; font-weight: 600;">${teacherName}</div>
+                            <div class="stat-label" style="font-size: 0.85rem; color: #64748b;">Seu Professor</div>
+                        </div>
                     </div>
                     `}
                 </div>
@@ -195,10 +260,10 @@ export const StudentDashboard = {
                             ${lessons.map(lesson => `
                                 <div class="lesson-card" style="background: white; padding: 1.5rem; border-radius: 12px; border: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center;">
                                     <div>
-                                        <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
-                                            ${new Date(lesson.date + 'T' + (lesson.time || '00:00')) < new Date() ?
-                            '<span style="background: #f1f5f9; color: #64748b; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600;">CONCLUÍDA</span>' :
-                            '<span style="background: #e0f2fe; color: #0284c7; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600;">AGENDADA</span>'}
+                                        <div style="display: flex; gap: 0.5rem; margin-bottom: 0.8rem;">
+                                            ${lesson.status === 'CONCLUÍDA' || (new Date(lesson.date + 'T' + (lesson.time || '00:00')) < new Date() && lesson.status !== 'AGENDADA') ?
+                            '<span style="background: #f1f5f9; color: #64748b; padding: 4px 10px; border-radius: 6px; font-size: 0.75rem; font-weight: 600;">CONCLUÍDA</span>' :
+                            '<span style="background: #e0f2fe; color: #0284c7; padding: 4px 10px; border-radius: 6px; font-size: 0.75rem; font-weight: 600;">AGENDADA</span>'}
                                         </div>
                                         <h4 style="margin-bottom: 0.5rem; font-size: 1.1rem; color: #1e293b;">${lesson.title}</h4>
                                         <div style="font-size: 0.9rem; color: #64748b; display: flex; gap: 16px; align-items: center;">
@@ -206,7 +271,7 @@ export const StudentDashboard = {
                                             <span style="display: flex; align-items: center; gap: 6px;"><i data-lucide="clock" style="width: 14px;"></i> ${lesson.time}</span>
                                         </div>
                                     </div>
-                                    <button class="btn-primary" style="width: auto; padding: 0.6rem 1.2rem; font-size: 0.9rem; border-radius: 8px;">
+                                    <button class="btn-primary" onclick="window.viewLessonDetail('${lesson.id}')" style="width: auto; padding: 0.6rem 1.2rem; font-size: 0.9rem; border-radius: 8px;">
                                         <i data-lucide="play-circle" style="width: 16px; height: 16px; margin-right: 6px;"></i> Ver
                                     </button>
                                 </div>
@@ -239,17 +304,17 @@ export const StudentDashboard = {
                 } else {
                     contentEl.innerHTML = `
                     ${statsHtml}
-                    <h3 style="margin-bottom: 1.5rem; display: flex; align-items: center; gap: 10px;">
+                    <h3 style="margin: 2rem 0 1.5rem 0; display: flex; align-items: center; gap: 10px;">
                         <i data-lucide="list" style="color: var(--primary-color);"></i> Seu Cronograma
                     </h3>
-                    <div style="display: grid; gap: 1rem;">
+                    <div style="display: grid; gap: 1.5rem;">
                         ${lessons.map(lesson => `
                             <div class="lesson-card" style="background: white; padding: 1.5rem; border-radius: 12px; border: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center; transition: transform 0.2s; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
                                 <div>
-                                    <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
-                                        ${new Date(lesson.date + 'T' + (lesson.time || '00:00')) < new Date() ?
-                            '<span style="background: #f1f5f9; color: #64748b; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600;">CONCLUÍDA</span>' :
-                            '<span style="background: #e0f2fe; color: #0284c7; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600;">AGENDADA</span>'}
+                                    <div style="display: flex; gap: 0.5rem; margin-bottom: 0.8rem;">
+                                        ${lesson.status === 'CONCLUÍDA' || (new Date(lesson.date + 'T' + (lesson.time || '00:00')) < new Date() && lesson.status !== 'AGENDADA') ?
+                            '<span style="background: #f1f5f9; color: #64748b; padding: 4px 10px; border-radius: 6px; font-size: 0.75rem; font-weight: 600;">CONCLUÍDA</span>' :
+                            '<span style="background: #e0f2fe; color: #0284c7; padding: 4px 10px; border-radius: 6px; font-size: 0.75rem; font-weight: 600;">AGENDADA</span>'}
                                     </div>
                                     <h4 style="margin-bottom: 0.5rem; font-size: 1.1rem; color: #1e293b;">${lesson.title}</h4>
                                     <div style="font-size: 0.9rem; color: #64748b; display: flex; gap: 16px; align-items: center;">
@@ -257,7 +322,7 @@ export const StudentDashboard = {
                                         <span style="display: flex; align-items: center; gap: 6px;"><i data-lucide="clock" style="width: 14px;"></i> ${lesson.time}</span>
                                     </div>
                                 </div>
-                                <button class="btn-primary" style="width: auto; padding: 0.6rem 1.2rem; font-size: 0.9rem; border-radius: 8px;">
+                                <button class="btn-primary" onclick="window.viewLessonDetail('${lesson.id}')" style="width: auto; padding: 0.6rem 1.2rem; font-size: 0.9rem; border-radius: 8px;">
                                     <i data-lucide="play-circle" style="width: 16px; height: 16px; margin-right: 6px;"></i> Ver Conteúdo
                                 </button>
                             </div>
@@ -379,33 +444,49 @@ export const StudentDashboard = {
         loadContext();
 
         // Check availability on date change
-        // Check availability on date change
-        dateInput.onchange = async () => {
-            const date = dp.getValue();
-            if (!date || !teacherUid) return;
+        const checkAvailability = async (selectedDate) => {
+            if (!selectedDate || !teacherUid) return;
+
+            busyInfo.style.display = 'block';
+            busyList.innerHTML = '<div class="spinner-small"></div> <span style="font-size: 0.8rem; color: #94a3b8;">Verificando agenda...</span>';
 
             try {
+                // Get ALL lessons for this teacher on this date
                 const snapshot = await db.collection('lessons')
                     .where('teacherUid', '==', teacherUid)
-                    .where('date', '==', date)
+                    .where('date', '==', selectedDate)
                     .get();
 
                 const busyTimes = snapshot.docs.map(doc => doc.data().time);
 
+                // Helper to add +1h
+                const getRange = (timeStr) => {
+                    const [h, m] = timeStr.split(':').map(Number);
+                    const endH = String((h + 1) % 24).padStart(2, '0');
+                    const endM = String(m).padStart(2, '0');
+                    return `${timeStr} - ${endH}:${endM}`;
+                };
+
+                // Clear and render
                 if (busyTimes.length > 0) {
-                    busyInfo.style.display = 'block';
-                    busyList.innerHTML = busyTimes.map(t => `
-                        <span style="background: #fee2e2; color: #ef4444; padding: 4px 10px; border-radius: 6px; font-size: 0.85rem; font-weight: 600; border: 1px solid #fecaca;">
-                            ${t}
+                    busyList.innerHTML = busyTimes.sort().map(t => `
+                        <span style="background: #fee2e2; color: #ef4444; padding: 4px 10px; border-radius: 6px; font-size: 0.85rem; font-weight: 600; border: 1px solid #fecaca; display: flex; align-items: center; gap: 4px;">
+                            <i data-lucide="x-circle" style="width: 12px;"></i> ${getRange(t)}
                         </span>
                     `).join('');
                 } else {
                     busyInfo.style.display = 'none';
+                    busyList.innerHTML = '';
                 }
+                if (window.lucide) lucide.createIcons({ root: busyList });
             } catch (error) {
                 console.error("Erro ao verificar disponibilidade:", error);
+                busyList.innerHTML = '<span style="color: #ef4444; font-size: 0.8rem;">Erro ao verificar agenda.</span>';
             }
         };
+
+        // Attach change listeners to pickers
+        dateInput.onchange = () => checkAvailability(dp.getValue());
 
         form.onsubmit = async (e) => {
             e.preventDefault();
@@ -423,15 +504,24 @@ export const StudentDashboard = {
             submitBtn.innerHTML = '<i class="lucide-spinner" style="animation: spin 1s linear infinite;"></i> Agendando...';
 
             try {
-                // Final Availability Check
-                const finalCheck = await db.collection('lessons')
+                // Final Availability Check (Prevent overlaps within 60 minutes)
+                const snapshot = await db.collection('lessons')
                     .where('teacherUid', '==', teacherUid)
                     .where('date', '==', date)
-                    .where('time', '==', time)
                     .get();
 
-                if (!finalCheck.empty) {
-                    Toast.show('Desculpe, este horário acabou de ser ocupado.', 'error');
+                const isOverlapping = (t1, t2) => {
+                    const [h1, m1] = t1.split(':').map(Number);
+                    const [h2, m2] = t2.split(':').map(Number);
+                    const mins1 = h1 * 60 + m1;
+                    const mins2 = h2 * 60 + m2;
+                    return Math.abs(mins1 - mins2) < 60;
+                };
+
+                const overlappingLesson = snapshot.docs.find(doc => isOverlapping(doc.data().time, time));
+
+                if (overlappingLesson) {
+                    Toast.show('Conflito: Este horário sobrepõe outra aula (duração de 1h).', 'error');
                     submitBtn.disabled = false;
                     submitBtn.innerHTML = 'Confirmar Agendamento';
                     return;
@@ -439,12 +529,12 @@ export const StudentDashboard = {
 
                 // Create Lesson
                 await db.collection('lessons').add({
-                    teacherUid: teacherUid,
-                    studentId: studentId,
-                    userUid: user.uid,
-                    title: title,
-                    date: date,
-                    time: time,
+                    teacherUid: teacherUid || null,
+                    studentId: studentId || null,
+                    userUid: user.uid || null,
+                    title: title || 'Aula de Reforço',
+                    date: date || null,
+                    time: time || null,
                     type: 'reinforcement',
                     status: 'AGENDADA',
                     createdAt: firebase.firestore.FieldValue.serverTimestamp()
@@ -461,4 +551,62 @@ export const StudentDashboard = {
             }
         };
     }
+};
+
+// Global function to view lesson details
+window.viewLessonDetail = (lessonId) => {
+    const lesson = currentLessons.find(l => l.id === lessonId);
+    if (!lesson) {
+        Toast.show('Aula não encontrada.', 'error');
+        return;
+    }
+
+    const modal = document.getElementById('lesson-detail-modal');
+    const title = document.getElementById('detail-title');
+    const subtitle = document.getElementById('detail-subtitle');
+    const content = document.getElementById('lesson-detail-content');
+
+    if (!modal || !content) return;
+
+    title.textContent = lesson.title;
+    subtitle.textContent = `${lesson.date} às ${lesson.time}`;
+
+    content.innerHTML = `
+        <div class="detail-section">
+            <h5 style="color: var(--primary-color); font-size: 0.85rem; text-transform: uppercase; margin-bottom: 0.5rem; font-weight: 600;">Tema da Aula</h5>
+            <p style="color: var(--dark);">${lesson.theme || 'Não definido'}</p>
+        </div>
+
+        ${lesson.content && lesson.content.length > 0 ? `
+        <div class="detail-section">
+            <h5 style="color: var(--primary-color); font-size: 0.85rem; text-transform: uppercase; margin-bottom: 0.8rem; font-weight: 600;">Conteúdo Programado</h5>
+            <div style="display: grid; gap: 10px;">
+                ${lesson.content.map(item => {
+        const text = typeof item === 'string' ? item : item.text;
+        const completed = typeof item === 'string' ? false : item.completed;
+        return `
+                        <div style="display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: #f8fafc; border: 1px solid #f1f5f9; border-radius: 10px;">
+                            <i data-lucide="${completed ? 'check-circle-2' : 'circle'}" 
+                               style="width: 18px; height: 18px; color: ${completed ? '#10b981' : '#cbd5e1'};"></i>
+                            <span style="font-size: 0.95rem; color: #475569; ${completed ? 'text-decoration: line-through;' : ''}">${text}</span>
+                        </div>
+                    `;
+    }).join('')}
+            </div>
+        </div>
+        ` : ''}
+
+        ${lesson.exercises ? `
+        <div class="detail-section">
+            <h5 style="color: var(--primary-color); font-size: 0.85rem; text-transform: uppercase; margin-bottom: 0.5rem; font-weight: 600;">Exercícios Selecionados</h5>
+            <div style="background: #f0fdf4; border: 1px solid #bbf7d0; padding: 1rem; border-radius: 10px; color: #166534; display: flex; gap: 10px; align-items: start;">
+                <i data-lucide="dumbbell" style="width: 20px; height: 20px; flex-shrink: 0;"></i>
+                <p style="font-size: 0.95rem;">${lesson.exercises}</p>
+            </div>
+        </div>
+        ` : ''}
+    `;
+
+    modal.classList.add('active');
+    if (window.lucide) lucide.createIcons({ root: content });
 };

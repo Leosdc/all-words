@@ -38,6 +38,70 @@ class AuthService {
                     if (doc.exists) {
                         const userData = doc.data();
 
+                        // --- SELF-HEALING / STATUS FIX ---
+                        // If student is waiting_approval OR missing linkedTeacher, try to heal
+                        if (userData.role === 'student' && (userData.status === 'waiting_approval' || !userData.linkedTeacher)) {
+                            try {
+                                const email = user.email.toLowerCase().trim();
+
+                                // 1. If we have the link fields, check for approval
+                                if (userData.linkedTeacher && userData.studentIdInTeacherDoc) {
+                                    const teacherStudentDoc = await db.collection('users')
+                                        .doc(userData.linkedTeacher)
+                                        .collection('students')
+                                        .doc(userData.studentIdInTeacherDoc)
+                                        .get();
+
+                                    if (teacherStudentDoc.exists && teacherStudentDoc.data().status === 'active') {
+                                        console.log("Student approved by teacher, updating local status...");
+                                        const userUpdate = { status: 'active' };
+                                        await db.collection('users').doc(user.uid).update(userUpdate);
+
+                                        // Also update student_links mapping for consistency
+                                        try {
+                                            await db.collection('student_links').doc(email).update({
+                                                status: 'linked',
+                                                uid: user.uid
+                                            });
+                                        } catch (err) { console.warn("Could not update student_links during self-healing", err); }
+
+                                        userData.status = 'active';
+                                    }
+                                }
+                                // 2. If we ARE MISSING link fields, look in student_links
+                                else {
+                                    const linkDoc = await db.collection('student_links').doc(email).get();
+                                    if (linkDoc.exists) {
+                                        const linkData = linkDoc.data();
+                                        console.log("Found missing link in student_links, applying...");
+
+                                        const updateData = {
+                                            linkedTeacher: linkData.teacherUid,
+                                            studentIdInTeacherDoc: linkData.studentId
+                                        };
+
+                                        // Also check if they are already active in teacher's sub-collection
+                                        const teacherStudentDoc = await db.collection('users')
+                                            .doc(linkData.teacherUid)
+                                            .collection('students')
+                                            .doc(linkData.studentId)
+                                            .get();
+
+                                        if (teacherStudentDoc.exists && teacherStudentDoc.data().status === 'active') {
+                                            updateData.status = 'active';
+                                            userData.status = 'active';
+                                        }
+
+                                        await db.collection('users').doc(user.uid).update(updateData);
+                                        userData.linkedTeacher = linkData.teacherUid;
+                                        userData.studentIdInTeacherDoc = linkData.studentId;
+                                    }
+                                }
+                            } catch (e) {
+                                console.warn("Could not self-verify student status:", e);
+                            }
+                        }
+
                         // Check if student is approved
                         if (userData.role === 'student' && userData.status === 'waiting_approval') {
                             modal.show({

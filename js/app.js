@@ -56,7 +56,7 @@ const navigate = (viewName) => {
         case 'student-dashboard':
             if (!currentUser) return navigate('home');
             viewHtml = StudentDashboard.render(currentUser);
-            attachEventsFn = () => StudentDashboard.attachEvents(navigate);
+            attachEventsFn = () => StudentDashboard.attachEvents(navigate, currentUser);
             break;
 
         case 'student-agenda':

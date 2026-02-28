@@ -73,9 +73,6 @@ export const TeacherDashboard = {
                                     <button class="btn-primary" id="btn-new-ai-class" style="background: var(--dark); color: white; width: auto; font-size: 0.95rem; padding: 0.8rem 1.5rem; border-radius: 50px; display: flex; align-items: center; gap: 10px; transition: all 0.2s;">
                                         <i data-lucide="sparkles" style="width:18px;"></i> Nova Aula com IA
                                     </button>
-                                    <button class="btn-secondary" id="btn-invite-student" style="background: white; color: var(--dark); border: 1px solid #e2e8f0; width: auto; font-size: 0.95rem; padding: 0.8rem 1.5rem; border-radius: 50px; cursor: pointer;">
-                                        Convidar Aluno
-                                    </button>
                                 </div>
                             </div>
                         </div>

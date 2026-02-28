@@ -38,7 +38,7 @@ export const ProfileModal = {
 
                         <div style="padding-top: 1rem; margin-top: 0.5rem;">
                             <h3 style="font-size: 1.1rem; margin-bottom: 1rem; color: var(--dark); display: flex; align-items: center; gap: 0.5rem;">
-                                <i data-lucide="shield-lock" style="width: 18px;"></i> Segurança
+                                <i data-lucide="lock" style="width: 18px;"></i> Segurança
                             </h3>
                             <button type="button" class="btn-secondary" id="btn-toggle-password" 
                                 style="width: 100%; padding: 0.8rem; border-radius: 12px; color: var(--dark); border-color: #cbd5e1; background: white; font-size: 0.95rem;">

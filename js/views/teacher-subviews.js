@@ -192,26 +192,28 @@ const renderStudentGrid = () => {
 };
 
 window.approveStudent = async (studentId, userUid) => {
-    if (!confirm('Deseja aprovar o vínculo deste aluno?')) return;
+    const confirmed = await modal.confirm({
+        title: 'Aprovar Vínculo',
+        message: 'Deseja aprovar o vínculo deste aluno? Ele terá acesso imediato à plataforma.',
+        confirmText: 'Aprovar',
+        type: 'success'
+    });
+
+    if (!confirmed) return;
+
     const uid = getUserId();
     try {
         const batch = db.batch();
         const studentRef = db.collection('users').doc(uid).collection('students').doc(studentId);
         batch.update(studentRef, { status: 'active' });
 
-        if (userUid && userUid !== 'undefined') {
-            batch.update(db.collection('users').doc(userUid), { status: 'active' });
-
-            // Also update the link document if it exists
-            const userDoc = await db.collection('users').doc(userUid).get();
-            if (userDoc.exists && userDoc.data().email) {
-                batch.update(db.collection('student_links').doc(userDoc.data().email.toLowerCase().trim()), { status: 'linked' });
-            }
-        }
+        // SECURITY NOTE: We don't update db.collection('users').doc(userUid) here to avoid permission errors.
+        // The student handles their own status update upon next login via self-healing.
+        // We also don't update student_links here as teachers lack permission; student handles it later.
 
         await batch.commit();
         modal.show({ title: 'Sucesso', message: 'Aluno aprovado com sucesso!', type: 'success' });
-        fetchStudents(); // Correct call
+        fetchStudents();
     } catch (error) {
         console.error("Erro ao aprovar aluno:", error);
         modal.show({ title: 'Erro', message: 'Erro ao aprovar vínculo.', type: 'error' });
@@ -311,19 +313,17 @@ const addStudentToFirestore = async (student) => {
             const userUid = student.userUid || (linkData ? linkData.uid : null);
 
             if (userUid) {
-                // If student is becoming 'active', update global user status to unlock LOGIN
-                if (student.status === 'active') {
-                    batch.update(db.collection('users').doc(userUid), { status: 'active' });
-                } else if (student.status === 'cancelled' || student.status === 'refused') {
-                    batch.update(db.collection('users').doc(userUid), { status: 'refused' });
-                }
+                // SECURITY FIX: Removed batch.update(db.collection('users').doc(userUid), { status: ... })
+                // Students handle their own user status updates.
 
-                // Update link record
-                batch.update(db.collection('student_links').doc(studentEmail), {
-                    status: student.status === 'active' ? 'linked' : 'refused',
-                    teacherUid: uid,
-                    studentId: student.id
-                });
+                // Update link record (Ignore error if no permission)
+                try {
+                    batch.update(db.collection('student_links').doc(studentEmail), {
+                        status: student.status === 'active' ? 'linked' : 'refused',
+                        teacherUid: uid,
+                        studentId: student.id
+                    });
+                } catch (e) { console.warn("Link update skipped", e); }
             } else {
                 // Not registered yet, update invitation link
                 batch.set(db.collection('student_links').doc(studentEmail), {
@@ -380,11 +380,40 @@ const addLessonToFirestore = async (lesson) => {
 
     try {
         const student = studentsData.find(s => s.id === lesson.studentId);
+
+        // Overlap Check (60 minutes)
+        const snapshot = await db.collection('lessons')
+            .where('teacherUid', '==', uid)
+            .where('date', '==', lesson.date)
+            .get();
+
+        const isOverlapping = (t1, t2) => {
+            if (!t1 || !t2) return false;
+            const [h1, m1] = t1.split(':').map(Number);
+            const [h2, m2] = t2.split(':').map(Number);
+            const mins1 = h1 * 60 + m1;
+            const mins2 = h2 * 60 + m2;
+            return Math.abs(mins1 - mins2) < 60;
+        };
+
+        const conflict = snapshot.docs.find(doc => doc.id !== lesson.id && isOverlapping(doc.data().time, lesson.time));
+        if (conflict) {
+            throw new Error(`Conflito com outra aula neste horário (${conflict.data().time}).`);
+        }
+
         const lessonData = {
             ...lesson,
-            teacherUid: uid,
-            userUid: student ? student.userUid : null
+            teacherUid: uid || null,
+            userUid: (student && typeof student.userUid === 'string' && student.userUid !== 'undefined') ? student.userUid : null
         };
+
+        // Aggressive cleanup: remove any undefined fields before sending to Firestore
+        Object.keys(lessonData).forEach(key => {
+            if (lessonData[key] === undefined) {
+                console.warn(`Removing undefined field: ${key}`);
+                lessonData[key] = null;
+            }
+        });
         if (lesson.id) {
             // Update existing
             await db.collection('lessons').doc(lesson.id).set(lessonData, { merge: true });
@@ -405,14 +434,76 @@ const addLessonToFirestore = async (lesson) => {
     }
 };
 
-const deleteLessonFromFirestore = async (studentId, lessonId) => {
+// Delete Lesson from Firestore
+async function deleteLessonFromFirestore(studentId, lessonId) {
     try {
         await db.collection('lessons').doc(lessonId).delete();
-        // Update local
-        const index = lessonsData.findIndex(l => l.id === lessonId);
-        if (index !== -1) lessonsData.splice(index, 1);
+        lessonsData = lessonsData.filter(l => l.id !== lessonId);
+        Toast.show("Aula removida.", "success");
     } catch (error) {
         console.error("Error deleting lesson:", error);
+        Toast.show("Erro ao excluir aula.", "error");
+    }
+}
+
+// Quick Toggle Lesson Status
+window.toggleLessonStatus = async (studentId, lessonId) => {
+    try {
+        const lesson = lessonsData.find(l => l.id === lessonId);
+        if (!lesson) return;
+
+        const isPast = new Date(lesson.date + 'T' + (lesson.time || '00:00')) < new Date();
+        const currentStatus = lesson.status || (isPast ? 'CONCLUÍDA' : 'AGENDADA');
+        const nextStatus = currentStatus === 'CONCLUÍDA' ? 'AGENDADA' : 'CONCLUÍDA';
+
+        await db.collection('lessons').doc(lessonId).update({ status: nextStatus });
+        lesson.status = nextStatus;
+
+        Toast.show(`Aula marcada como ${nextStatus.toLowerCase()}.`, "success");
+        const listEl = document.getElementById(`student-lessons-list-${studentId}`);
+        if (listEl) listEl.innerHTML = renderStudentLessons(studentId);
+    } catch (error) {
+        console.error("Error toggling lesson status:", error);
+        Toast.show("Erro ao atualizar status.", "error");
+    }
+};
+
+// Quick Delete Lesson
+window.deleteLessonQuick = async (studentId, lessonId) => {
+    const confirmed = await modal.confirm({
+        title: 'Excluir Aula',
+        message: 'Tem certeza que deseja excluir esta aula permanentemente?',
+        type: 'error',
+        confirmText: 'Excluir',
+        cancelText: 'Manter'
+    });
+
+    if (confirmed) {
+        await deleteLessonFromFirestore(studentId, lessonId);
+        const listEl = document.getElementById(`student-lessons-list-${studentId}`);
+        if (listEl) listEl.innerHTML = renderStudentLessons(studentId);
+    }
+};
+
+// Toggle Content Item
+window.toggleContentItem = async (studentId, lessonId, itemIndex) => {
+    try {
+        const lesson = lessonsData.find(l => l.id === lessonId);
+        if (!lesson || !lesson.content) return;
+
+        const item = lesson.content[itemIndex];
+        if (typeof item === 'string') {
+            lesson.content[itemIndex] = { text: item, completed: true };
+        } else {
+            item.completed = !item.completed;
+        }
+
+        await db.collection('lessons').doc(lessonId).update({ content: lesson.content });
+        const listEl = document.getElementById(`student-lessons-list-${studentId}`);
+        if (listEl) listEl.innerHTML = renderStudentLessons(studentId);
+        if (window.lucide) lucide.createIcons();
+    } catch (error) {
+        console.error("Error toggling content item:", error);
     }
 };
 
@@ -422,7 +513,29 @@ export const TeacherStudents = {
         return `
             <section id="teacher-students-view" class="view active teacher-dash">
                 <style>
-                    /* Inline dirty fix for modal z-index if needed, though css file handles it */
+                    /* Hide number input arrows */
+                    input[type=number]::-webkit-inner-spin-button, 
+                    input[type=number]::-webkit-outer-spin-button { 
+                        -webkit-appearance: none; 
+                        margin: 0; 
+                    }
+                    input[type=number] {
+                        -moz-appearance: textfield;
+                    }
+                    
+                    .btn-pill {
+                        border-radius: 50px !important;
+                        padding: 0.6rem 1.5rem !important;
+                        font-weight: 600 !important;
+                        display: flex !important;
+                        align-items: center !important;
+                        gap: 8px !important;
+                        transition: all 0.2s !important;
+                    }
+                    .btn-pill:hover {
+                        transform: translateY(-1px) !important;
+                        box-shadow: 0 4px 12px rgba(0,0,0,0.08) !important;
+                    }
                 </style>
                 <div class="dashboard-layout">
                     ${Sidebar.render(user, 'students')}
@@ -434,9 +547,6 @@ export const TeacherStudents = {
                                 <div style="display: flex; gap: 10px;">
                                     <button id="btn-sync-students" class="btn-secondary" onclick="window.syncStudentsWithUsers(event)" style="width: auto; padding: 0.5rem 1rem; margin: 0; font-size: 0.9rem; display: flex; align-items: center; justify-content: center; gap: 8px; background: white; color: var(--dark); border-color: #e2e8f0;">
                                         <i data-lucide="refresh-cw" style="width: 18px; height: 18px;"></i> Sincronizar Vínculos
-                                    </button>
-                                    <button id="btn-open-add-student" class="btn-primary" style="width: auto; padding: 0.5rem 1rem; margin: 0; font-size: 0.9rem; display: flex; align-items: center; justify-content: center; gap: 8px;">
-                                        <i data-lucide="plus" style="width: 18px; height: 18px;"></i> Adicionar Aluno
                                     </button>
                                 </div>
                             </div>
@@ -455,77 +565,13 @@ export const TeacherStudents = {
                         </div>
 
                         <!-- MODALS moved inside main-content for smart navigation support -->
-                        <!-- ADD STUDENT MODAL -->
-                        <div id="add-student-modal" class="modal-overlay">
-                            <div class="modal-content" style="text-align: left;">
-                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
-                                    <h2>Novo Aluno</h2>
-                                    <button id="btn-close-modal" style="background: none; border: none; cursor: pointer;">
-                                        <i data-lucide="x" style="width: 24px; height: 24px;"></i>
-                                    </button>
-                                </div>
-                                <form id="form-add-student">
-                                    <input type="hidden" name="b_id" id="input-student-id">
-                                    <div class="form-group">
-                                        <label>Nome Completo</label>
-                                        <input type="text" name="b_name" class="form-input" required placeholder="Ex: Ana Souza">
-                                    </div>
-                                    <div class="form-group">
-                                        <label>Email do Aluno</label>
-                                        <input type="email" name="b_email" class="form-input" required placeholder="Ex: ana.souza@email.com">
-                                    </div>
-                                    <div class="form-group" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-                                        <div>
-                                            <label>Idade</label>
-                                            <input type="number" name="b_age" class="form-input" required placeholder="Ex: 25">
-                                        </div>
-                                        <div>
-                                            <label>Nível Atual</label>
-                                            <select name="b_level" class="form-select" required>
-                                                <option value="Pré A">Pré A</option>
-                                                <option value="A1">A1</option>
-                                                <option value="A2">A2</option>
-                                                <option value="B1">B1</option>
-                                                <option value="B2">B2</option>
-                                                <option value="C1">C1</option>
-                                                <option value="C2">C2</option>
-                                            </select>
-                                        </div>
-                                    </div>
-                                    <div class="form-group">
-                                        <label>Objetivo</label>
-                                        <select name="b_reason" class="form-select" required>
-                                            <option value="Viagem">Viagem</option>
-                                            <option value="Negócios">Negócios</option>
-                                            <option value="Comunicação">Comunicação</option>
-                                            <option value="Informação">Informação</option>
-                                            <option value="Trabalho">Trabalho</option>
-                                            <option value="Outro">Outro</option>
-                                        </select>
-                                        <input type="text" name="b_reason_other" id="input-other-reason" class="form-input" placeholder="Qual o objetivo?" style="display: none; margin-top: 0.5rem;">
-                                    </div>
-                                     <div class="form-group">
-                                        <label>Status Inicial</label>
-                                        <select name="b_status" class="form-select" required>
-                                            <option value="waiting">Aguardando Contrato</option>
-                                            <option value="active">Efetivado</option>
-                                            <option value="cancelled">Cancelado</option>
-                                        </select>
-                                    </div>
-                                    <div style="margin-top: 2rem; display: flex; gap: 1rem;">
-                                        <button type="button" id="btn-cancel-add" class="btn-secondary" style="flex: 1; height: 44px; display: flex; align-items: center; justify-content: center; padding: 0; background: #f8fafc; color: #64748b; border: 1px solid #e2e8f0; border-radius: 12px; cursor: pointer; font-weight: 500; font-size: 1rem;">Cancelar</button>
-                                        <button type="submit" class="btn-primary" style="flex: 1; height: 44px; display: flex; align-items: center; justify-content: center; padding: 0; border: 1px solid transparent; border-radius: 12px; font-weight: 600; font-size: 1rem;">Cadastrar Aluno</button>
-                                    </div>
-                                </form>
-                            </div>
-                        </div>
 
                         <!-- ADD LESSON MODAL -->
                         <div id="add-lesson-modal" class="modal-overlay">
                             <div class="modal-content" style="text-align: left;">
                                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
                                     <h2>Nova Aula</h2>
-                                    <button id="btn-close-lesson-modal" style="background: none; border: none; cursor: pointer;">
+                                    <button id="btn-close-lesson-modal" onclick="window.closeLessonModal()" style="background: none; border: none; cursor: pointer;">
                                         <i data-lucide="x" style="width: 24px; height: 24px;"></i>
                                     </button>
                                 </div>
@@ -567,7 +613,7 @@ export const TeacherStudents = {
                                         <button type="button" id="btn-delete-lesson" style="display: none; background: #fee2e2; color: #b91c1c; border: none; width: 44px; height: 44px; border-radius: 12px; cursor: pointer; align-items: center; justify-content: center; transition: opacity 0.2s;">
                                             <i data-lucide="trash-2" style="width: 20px; height: 20px;"></i>
                                         </button>
-                                        <button type="button" id="btn-cancel-lesson" style="flex: 1; height: 44px; display: flex; align-items: center; justify-content: center; padding: 0; background: #f8fafc; color: #64748b; border: 1px solid #e2e8f0; border-radius: 12px; cursor: pointer; font-weight: 500; font-size: 1rem; transition: background 0.2s;">Cancelar</button>
+                                        <button type="button" id="btn-cancel-lesson" onclick="window.closeLessonModal()" style="flex: 1; height: 44px; display: flex; align-items: center; justify-content: center; padding: 0; background: #f8fafc; color: #64748b; border: 1px solid #e2e8f0; border-radius: 12px; cursor: pointer; font-weight: 500; font-size: 1rem; transition: background 0.2s;">Cancelar</button>
                                         <button type="submit" style="flex: 2; height: 44px; display: flex; align-items: center; justify-content: center; padding: 0; background: #0ea5e9; color: white; border: 1px solid transparent; border-radius: 12px; cursor: pointer; font-weight: 600; font-size: 1rem; transition: background 0.2s;">Salvar Aula</button>
                                     </div>
                                 </form>
@@ -610,6 +656,69 @@ export const TeacherStudents = {
                             </div>
                         </div>
 
+                        <!-- EDIT STUDENT MODAL -->
+                        <div id="student-modal" class="modal-overlay">
+                            <div class="modal-content" style="text-align: left;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+                                    <h2 id="student-modal-title">Editar Aluno</h2>
+                                    <button onclick="document.getElementById('student-modal').classList.remove('active')" style="background: none; border: none; cursor: pointer;">
+                                        <i data-lucide="x" style="width: 24px; height: 24px;"></i>
+                                    </button>
+                                </div>
+                                <form id="form-edit-student">
+                                    <input type="hidden" id="edit-student-id">
+                                    <div class="form-group">
+                                        <label>Nome Completo</label>
+                                        <input type="text" id="edit-student-name" class="form-input" required>
+                                    </div>
+                                    <div class="form-group">
+                                        <label>E-mail</label>
+                                        <input type="email" id="edit-student-email" class="form-input" required readonly style="background: #f1f5f9; cursor: not-allowed;">
+                                    </div>
+                                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
+                                        <div class="form-group">
+                                            <label>Idade</label>
+                                            <input type="number" id="edit-student-age" class="form-input">
+                                        </div>
+                                        <div class="form-group">
+                                            <label>Nível</label>
+                                            <div style="position: relative;">
+                                                <select id="edit-student-level" class="form-input" style="appearance: none; -webkit-appearance: none; padding-right: 2.5rem;">
+                                                    <option value="A1">A1 - Iniciante</option>
+                                                    <option value="A2">A2 - Básico</option>
+                                                    <option value="B1">B1 - Intermediário</option>
+                                                    <option value="B2">B2 - Intermediário Superior</option>
+                                                    <option value="C1">C1 - Avançado</option>
+                                                    <option value="C2">C2 - Proficiente (Nativo)</option>
+                                                </select>
+                                                <i data-lucide="chevron-down" style="position: absolute; right: 1rem; top: 50%; transform: translateY(-50%); pointer-events: none; width: 16px; height: 16px; color: #64748b;"></i>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Status do Aluno</label>
+                                        <div style="position: relative;">
+                                            <select id="edit-student-status" class="form-input" style="appearance: none; -webkit-appearance: none; padding-right: 2.5rem;">
+                                                <option value="active">Efetivado (Ativo)</option>
+                                                <option value="waiting_approval">Pendente (Aguardando Aprovação)</option>
+                                                <option value="waiting">Aguardando (Novo)</option>
+                                                <option value="cancelled">Cancelado / Inativo</option>
+                                            </select>
+                                            <i data-lucide="chevron-down" style="position: absolute; right: 1rem; top: 50%; transform: translateY(-50%); pointer-events: none; width: 16px; height: 16px; color: #64748b;"></i>
+                                        </div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Objetivo/Motivação</label>
+                                        <textarea id="edit-student-reason" class="form-input" style="height: 100px; padding: 0.8rem;"></textarea>
+                                    </div>
+                                    <div style="margin-top: 2rem; display: flex; gap: 1rem;">
+                                        <button type="button" onclick="document.getElementById('student-modal').classList.remove('active')" class="btn-secondary" style="flex: 1;">Cancelar</button>
+                                        <button type="submit" class="btn-primary" style="flex: 2;">Salvar Alterações</button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+
                          <!-- SELECT EXISTING EXERCISE MODAL -->
                         <div id="select-existing-exercise-modal" class="modal-overlay">
                             <div class="modal-content" style="max-width: 600px; text-align: left; padding: 2rem;">
@@ -636,10 +745,7 @@ export const TeacherStudents = {
         `;
     },
 
-    attachEvents: (navigate) => {
-        const studentModalEl = document.getElementById('add-student-modal');
-        const form = document.getElementById('form-add-student');
-
+    attachEvents: (navigate, user) => {
         // --- 1. EXPOSE GLOBAL FUNCTIONS FIRST (to prevent "is not a function" errors) ---
         window.closeStudentDetail = () => {
             const list = document.getElementById('student-list-container');
@@ -648,174 +754,21 @@ export const TeacherStudents = {
             if (detail) detail.style.display = 'none';
         };
 
-        window.openStudentModal = (studentId = null) => {
-            if (!form || !studentModalEl) return;
-            form.reset();
-            const titleEl = studentModalEl.querySelector('h2');
-            const submitBtn = studentModalEl.querySelector('button[type="submit"]');
-
-            if (studentId) {
-                const student = studentsData.find(s => s.id === studentId);
-                if (student) {
-                    const idInput = document.getElementById('input-student-id');
-                    if (idInput) idInput.value = student.id;
-
-                    form.querySelector('[name="b_name"]').value = student.name;
-                    form.querySelector('[name="b_email"]').value = student.email;
-                    form.querySelector('[name="b_age"]').value = student.age;
-                    form.querySelector('[name="b_level"]').value = student.level;
-                    form.querySelector('[name="b_status"]').value = student.status;
-
-                    const reasons = ["Viagem", "Negócios", "Comunicação", "Informação", "Trabalho"];
-                    const otherInput = document.getElementById('input-other-reason');
-                    if (reasons.includes(student.reason)) {
-                        form.querySelector('[name="b_reason"]').value = student.reason;
-                        if (otherInput) otherInput.style.display = 'none';
-                    } else {
-                        form.querySelector('[name="b_reason"]').value = 'Outro';
-                        if (otherInput) {
-                            otherInput.style.display = 'block';
-                            otherInput.value = student.reason;
-                        }
-                    }
-
-                    if (titleEl) titleEl.textContent = 'Editar Aluno';
-                    if (submitBtn) submitBtn.textContent = 'Salvar Alterações';
-                }
-            } else {
-                const idInput = document.getElementById('input-student-id');
-                if (idInput) idInput.value = '';
-                if (titleEl) titleEl.textContent = 'Novo Aluno';
-                if (submitBtn) submitBtn.textContent = 'Cadastrar Aluno';
-                const otherInput = document.getElementById('input-other-reason');
-                if (otherInput) otherInput.style.display = 'none';
-            }
-            studentModalEl.classList.add('active');
-        };
-
-        const toggleModal = (show) => {
-            if (show) window.openStudentModal();
-            else if (studentModalEl) studentModalEl.classList.remove('active');
+        window.closeLessonModal = () => {
+            const m = document.getElementById('add-lesson-modal');
+            if (m) m.classList.remove('active');
         };
 
         // --- 2. REST OF EVENTS ---
-        attachSidebarEvents(navigate);
+        if (user && user.role) attachSidebarEvents(navigate, user.role);
+        else attachSidebarEvents(navigate);
 
         if (studentsData.length === 0) fetchStudents();
         else renderStudentGrid();
 
         if (lessonsData.length === 0) fetchLessons();
 
-        if (document.getElementById('btn-open-add-student')) {
-            document.getElementById('btn-open-add-student').onclick = () => window.openStudentModal();
-        }
-        if (document.getElementById('btn-close-modal')) {
-            document.getElementById('btn-close-modal').onclick = () => toggleModal(false);
-        }
-        if (document.getElementById('btn-cancel-add')) {
-            document.getElementById('btn-cancel-add').onclick = () => toggleModal(false);
-        }
-
-        if (studentModalEl) {
-            // Desabilitado fechar clicando fora para evitar perda de dados por acidente
-            studentModalEl.onclick = (e) => {
-                if (e.target === studentModalEl) {
-                    console.log("Clique fora do modal ignorado para segurança");
-                }
-            };
-        }
-
-        // --- Handle "Outro" Reason ---
-        const reasonSelect = form ? form.querySelector('select[name="b_reason"]') : null;
-        const otherReasonInput = document.getElementById('input-other-reason');
-
-        if (reasonSelect && otherReasonInput) {
-            reasonSelect.onchange = (e) => {
-                if (e.target.value === 'Outro') {
-                    otherReasonInput.style.display = 'block';
-                    otherReasonInput.required = true;
-                } else {
-                    otherReasonInput.style.display = 'none';
-                    otherReasonInput.required = false;
-                    otherReasonInput.value = ''; // Clear
-                }
-            };
-        }
-
-        // --- Form Submit ---
-        if (form) {
-            form.onsubmit = (e) => {
-                e.preventDefault();
-                const formData = new FormData(form);
-                const studentId = formData.get('b_id'); // Hidden ID
-
-                let finalReason = formData.get('b_reason');
-                if (finalReason === 'Outro') {
-                    finalReason = formData.get('b_reason_other');
-                }
-
-                // Construct object (keep existing skills/created date if edit)
-                let studentData = {};
-
-                if (studentId) {
-                    // Update
-                    const existing = studentsData.find(s => s.id === studentId);
-                    studentData = {
-                        ...existing,
-                        name: formData.get('b_name'),
-                        email: formData.get('b_email'),
-                        age: formData.get('b_age'),
-                        level: formData.get('b_level'),
-                        reason: finalReason,
-                        status: formData.get('b_status')
-                    };
-
-                    // Update local array
-                    const index = studentsData.findIndex(s => s.id === studentId);
-                    if (index !== -1) studentsData[index] = studentData;
-
-                } else {
-                    // Create
-                    studentData = {
-                        id: Date.now().toString(),
-                        name: formData.get('b_name'),
-                        email: formData.get('b_email'),
-                        age: formData.get('b_age'),
-                        level: formData.get('b_level'),
-                        reason: finalReason,
-                        status: formData.get('b_status'),
-                        skills: {
-                            reading: { rating: 0, notes: '' },
-                            writing: { rating: 0, notes: '' },
-                            listening: { rating: 0, notes: '' },
-                            speaking: { rating: 0, notes: '' }
-                        }
-                    };
-                    studentsData.push(studentData);
-                }
-
-                addStudentToFirestore(studentData);
-                toggleModal(false);
-
-                // Refresh view
-                navigate('teacher-students');
-
-                // If we were in detail view, update it too (or just close it? user usually wants to see result)
-                // For simplicity, navigate resets to list. If user wants to see detail, they click again.
-                // Or we can check if detail was open.
-                if (studentId) {
-                    // If we are editing, we are likely in detail view or list view.
-                    // If detail view is open, refresh it?
-                    const detailContainer = document.getElementById('student-detail-container');
-                    if (detailContainer && detailContainer.style.display === 'block') {
-                        window.openStudentDetail(studentId);
-                    }
-                }
-            };
-        }
-
         // --- Detail View Logic ---
-        // Expose function globally so onClick in HTML works
         window.openStudentDetail = (id) => {
             const student = studentsData.find(s => s.id === id);
             if (!student) return;
@@ -823,73 +776,72 @@ export const TeacherStudents = {
             const listContainer = document.getElementById('student-list-container');
             const detailContainer = document.getElementById('student-detail-container');
 
-            listContainer.style.display = 'none';
-            detailContainer.style.display = 'block';
+            if (listContainer) listContainer.style.display = 'none';
+            if (detailContainer) {
+                detailContainer.style.display = 'block';
 
-            // Render Detail Content
-            detailContainer.innerHTML = `
-                <div class="header-bar">
-                    <button class="btn-secondary" onclick="window.closeStudentDetail()" style="width: auto; padding: 0.5rem 1rem; color: var(--dark); border: 1px solid #e2e8f0; background: white; display: flex; align-items: center; gap: 8px;">
-                        <i data-lucide="arrow-left" style="width: 18px;"></i> Voltar
-                    </button>
-                    <div style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
-                        <h2 style="margin: 0;">${student.name}</h2>
-                        <span class="student-status-badge ${student.status === 'active' ? 'status-active' : (student.status === 'waiting' ? 'status-waiting' : 'status-cancelled')}">
-                            ${student.status === 'active' ? 'Efetivado' : (student.status === 'waiting' ? 'Aguardando' : 'Cancelado')}
-                        </span>
-                         <button class="btn-primary" onclick="window.openStudentModal('${student.id}')" style="width: auto; padding: 0.5rem 1.2rem; font-size: 0.9rem; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border-radius: 50px;">
-                            <i data-lucide="edit-3" style="width: 16px; height: 16px;"></i> <span>Editar</span>
-                        </button>
-                    </div>
-                </div>
-
-                <div class="content-body">
-                    <div style="background: white; padding: 2rem; border-radius: 16px; margin-bottom: 2rem;">
-                         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 2rem; border-bottom: 1px solid #f1f5f9; padding-bottom: 2rem;">
-                            <div><span style="color:#64748b; font-size: 0.9rem;">Email</span><div style="font-weight:600;">${student.email || '-'}</div></div>
-                            <div><span style="color:#64748b; font-size: 0.9rem;">Idade</span><div style="font-weight:600;">${student.age} anos</div></div>
-                            <div><span style="color:#64748b; font-size: 0.9rem;">Nível Atual</span><div style="font-weight:600;">${student.level}</div></div>
-                            <div><span style="color:#64748b; font-size: 0.9rem;">Objetivo</span><div style="font-weight:600;">${student.reason}</div></div>
-                         </div>
-
-                         <h3>Habilidades Desenvolvidas</h3>
-                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin-top: 1.5rem;">
-                            ${renderSkillBlock(student, 'reading', 'Reading (Leitura)')}
-                            ${renderSkillBlock(student, 'writing', 'Writing (Escrita)')}
-                            ${renderSkillBlock(student, 'listening', 'Listening (Escuta)')}
-                            ${renderSkillBlock(student, 'speaking', 'Speaking (Fala)')}
-                         </div>
-
-                         <!-- LESSON PLAN SECTION -->
-                         <div style="margin-top: 3rem; border-top: 2px solid #f1f5f9; padding-top: 2rem;">
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
-                                <h3>Plano de Aula</h3>
-                                <button class="btn-primary" onclick="window.openAddLessonModal('${student.id}')" style="width: auto; padding: 0.5rem 1rem; font-size: 0.9rem; display: flex; align-items: center; gap: 8px;">
-                                    <i data-lucide="plus-circle" style="width: 18px;"></i> Nova Aula
-                                </button>
-                            </div>
-
-                            <div id="student-lessons-list-${student.id}">
-                                ${renderStudentLessons(student.id)}
-                            </div>
-                         </div>
-
-                         <div style="margin-top: 2rem; display: flex; justify-content: flex-end;">
-                            <button class="btn-secondary" onclick="window.closeStudentDetail()" style="width: auto; padding: 0.5rem 1rem; color: var(--dark); border: 1px solid #e2e8f0; background: white; display: flex; align-items: center; gap: 8px;">
-                                <i data-lucide="arrow-left" style="width: 18px;"></i> Voltar para Lista
+                // Render Detail Content
+                detailContainer.innerHTML = `
+                    <div class="header-bar" style="margin-left: 0.5rem;">
+                        <div style="display: flex; align-items: center; gap: 12px;">
+                            <button class="btn-secondary btn-pill" onclick="window.closeStudentDetail()" style="color: var(--dark); border: 1px solid #e2e8f0; background: white;">
+                                <i data-lucide="arrow-left" style="width: 18px;"></i> Voltar
                             </button>
-                         </div>
+                            <button class="btn-secondary btn-pill" onclick="window.openEditStudentModal('${student.id}')" style="color: #0284c7; border: 1px solid #bae6fd; background: #f0f9ff;">
+                                <i data-lucide="edit-3" style="width: 18px;"></i> Editar Dados
+                            </button>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
+                            <h2 style="margin: 0;">${student.name}</h2>
+                            <span class="student-status-badge ${student.status === 'active' ? 'status-active' : (student.status === 'waiting' || student.status === 'waiting_approval' ? 'status-waiting' : 'status-cancelled')}">
+                                ${student.status === 'active' ? 'Efetivado' : (student.status === 'waiting_approval' ? 'Pendente' : (student.status === 'waiting' ? 'Aguardando' : 'Cancelado'))}
+                            </span>
+                        </div>
                     </div>
-                </div>
-            `;
 
-            if (window.lucide) lucide.createIcons();
-            attachRatingEvents(student);
-        };
+                    <div class="content-body">
+                        <div style="background: white; padding: 2rem; border-radius: 16px; margin-bottom: 2rem;">
+                             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 2rem; border-bottom: 1px solid #f1f5f9; padding-bottom: 2rem;">
+                                <div><span style="color:#64748b; font-size: 0.9rem;">Email</span><div style="font-weight:600;">${student.email || '-'}</div></div>
+                                <div><span style="color:#64748b; font-size: 0.9rem;">Idade</span><div style="font-weight:600;">${student.age} anos</div></div>
+                                <div><span style="color:#64748b; font-size: 0.9rem;">Nível Atual</span><div style="font-weight:600;">${student.level}</div></div>
+                                <div><span style="color:#64748b; font-size: 0.9rem;">Objetivo</span><div style="font-weight:600;">${student.reason}</div></div>
+                             </div>
 
-        window.closeStudentDetail = () => {
-            document.getElementById('student-list-container').style.display = 'block';
-            document.getElementById('student-detail-container').style.display = 'none';
+                             <h3>Habilidades Desenvolvidas</h3>
+                             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin-top: 1.5rem;">
+                                ${renderSkillBlock(student, 'reading', 'Reading (Leitura)')}
+                                ${renderSkillBlock(student, 'writing', 'Writing (Escrita)')}
+                                ${renderSkillBlock(student, 'listening', 'Listening (Escuta)')}
+                                ${renderSkillBlock(student, 'speaking', 'Speaking (Fala)')}
+                             </div>
+
+                             <!-- LESSON PLAN SECTION -->
+                             <div style="margin-top: 3rem; border-top: 2px solid #f1f5f9; padding-top: 2rem;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                                    <h3>Plano de Aula</h3>
+                                    <button class="btn-primary" onclick="window.openAddLessonModal('${student.id}')" style="width: auto; padding: 0.5rem 1rem; font-size: 0.9rem; display: flex; align-items: center; gap: 8px;">
+                                        <i data-lucide="plus-circle" style="width: 18px;"></i> Nova Aula
+                                    </button>
+                                </div>
+
+                                <div id="student-lessons-list-${student.id}">
+                                    ${renderStudentLessons(student.id)}
+                                </div>
+                             </div>
+
+                             <div style="margin-top: 2rem; display: flex; justify-content: flex-end;">
+                                <button class="btn-secondary" onclick="window.closeStudentDetail()" style="width: auto; padding: 0.5rem 1rem; color: var(--dark); border: 1px solid #e2e8f0; background: white; display: flex; align-items: center; gap: 8px;">
+                                    <i data-lucide="arrow-left" style="width: 18px;"></i> Voltar para Lista
+                                </button>
+                             </div>
+                        </div>
+                    </div>
+                `;
+
+                if (window.lucide) lucide.createIcons();
+                attachRatingEvents(student);
+            }
         };
 
         // Helper to render skill block
@@ -916,7 +868,7 @@ export const TeacherStudents = {
             document.querySelectorAll('.stars .star').forEach(star => {
                 star.onclick = (e) => {
                     const skillKey = e.target.closest('.stars').dataset.skill;
-                    const value = parseInt(e.target.dataset.value); // Simple 1-5 for now, half stars require more complex UI logic or click position
+                    const value = parseInt(e.target.dataset.value);
 
                     // Update Local Data
                     if (!student.skills) student.skills = {};
@@ -942,85 +894,302 @@ export const TeacherStudents = {
             }
         };
 
-        // --- LESSON PLANS LOGIC ---
+        // --- Student Edit Logic ---
+        window.openEditStudentModal = (id) => {
+            const student = studentsData.find(s => s.id === id);
+            if (!student) return;
 
-        // Helper to render lessons list
-        function renderStudentLessons(studentId) {
-            const lessons = lessonsData.filter(l => l.studentId === studentId);
-            if (lessons.length === 0) {
-                return `<p style="color: #94a3b8; font-style: italic; margin-top: 1rem;">Nenhuma aula planejada.</p>`;
-            }
-            return `
-                <div style="display: grid; gap: 1rem; margin-top: 1rem;">
-                    ${lessons.map(lesson => `
-                        <div onclick="window.openAddLessonModal('${studentId}', '${lesson.id}')" 
-                             style="border: 1px solid #e2e8f0; border-radius: 12px; padding: 1rem; background: #f8fafc; cursor: pointer; transition: background 0.2s;">
-                            <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
-                                <h4 style="margin: 0; color: var(--dark); font-weight: 600;">${lesson.title}</h4>
-                                <div style="display: flex; gap: 8px; align-items: center;">
+            const modalEl = document.getElementById('student-modal');
+            if (!modalEl) return;
+
+            document.getElementById('edit-student-id').value = id;
+            document.getElementById('edit-student-name').value = student.name || '';
+            document.getElementById('edit-student-email').value = student.email || '';
+            document.getElementById('edit-student-age').value = student.age || '';
+            document.getElementById('edit-student-level').value = student.level || 'A1';
+            document.getElementById('edit-student-status').value = student.status || 'waiting';
+            document.getElementById('edit-student-reason').value = student.reason || '';
+
+            modalEl.classList.add('active');
+            if (window.lucide) lucide.createIcons();
+        };
+
+        const formEdit = document.getElementById('form-edit-student');
+        if (formEdit) {
+            formEdit.onsubmit = async (e) => {
+                e.preventDefault();
+                const id = document.getElementById('edit-student-id').value;
+                const student = studentsData.find(s => s.id === id);
+                if (!student) return;
+
+                const submitBtn = e.target.querySelector('button[type="submit"]');
+                const originalBtnText = submitBtn.innerHTML;
+                submitBtn.disabled = true;
+                submitBtn.innerHTML = '<i class="lucide-spinner" style="animation: spin 1s linear infinite;"></i> Salvando...';
+
+                try {
+                    const updatedData = {
+                        name: document.getElementById('edit-student-name').value,
+                        age: document.getElementById('edit-student-age').value,
+                        level: document.getElementById('edit-student-level').value,
+                        status: document.getElementById('edit-student-status').value,
+                        reason: document.getElementById('edit-student-reason').value
+                    };
+
+                    Object.assign(student, updatedData);
+                    await updateStudentInFirestore(student);
+
+                    Toast.show("Cadastro atualizado com sucesso!", "success");
+                    document.getElementById('student-modal').classList.remove('active');
+
+                    // Re-render detail view and grid
+                    window.openStudentDetail(id);
+                    renderStudentGrid();
+                } catch (error) {
+                    console.error("Error updating student:", error);
+                    Toast.show("Erro ao atualizar cadastro.", "error");
+                } finally {
+                    submitBtn.disabled = false;
+                    submitBtn.innerHTML = originalBtnText;
+                }
+            };
+        }
+    }
+};
+
+// --- LESSON PLANS LOGIC ---
+
+// Helper to render lessons list
+function renderStudentLessons(studentId) {
+    const lessons = lessonsData.filter(l => l.studentId === studentId);
+    if (lessons.length === 0) {
+        return `<p style="color: #94a3b8; font-style: italic; margin-top: 1rem;">Nenhuma aula planejada.</p>`;
+    }
+    return `
+                <div style="display: grid; gap: 1.5rem; margin-top: 1rem;">
+                    ${lessons.map(lesson => {
+        const isPast = new Date(lesson.date + 'T' + (lesson.time || '00:00')) < new Date();
+        const status = lesson.status || (isPast ? 'CONCLUÍDA' : 'AGENDADA');
+        const isFinished = status === 'CONCLUÍDA';
+
+        return `
+                        <div style="border: 1px solid #e2e8f0; border-radius: 16px; overflow: hidden; background: white; transition: all 0.2s; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
+                            <div onclick="window.openAddLessonModal('${studentId}', '${lesson.id}')" 
+                                 style="padding: 1.25rem; background: ${isFinished ? '#f8fafc' : 'white'}; cursor: pointer; border-bottom: 1px solid #f1f5f9;">
+                                <div style="display: flex; justify-content: space-between; margin-bottom: 0.75rem; align-items: start;">
+                                    <div>
+                                        <h4 style="margin: 0; color: var(--dark); font-weight: 700; font-size: 1.1rem;">${lesson.title}</h4>
+                                        <div style="font-size: 0.85rem; color: #64748b; margin-top: 0.25rem;">
+                                            <strong>Tema:</strong> ${lesson.theme}
+                                        </div>
+                                    </div>
+                                    <div style="display: flex; flex-direction: column; align-items: end; gap: 6px;">
+                                        <span style="font-size: 0.75rem; font-weight: 700; background: ${isFinished ? '#f1f5f9' : '#e0f2fe'}; color: ${isFinished ? '#64748b' : '#0284c7'}; padding: 4px 10px; border-radius: 6px; text-transform: uppercase;">
+                                            ${status}
+                                        </span>
+                                        <span style="font-size: 0.8rem; color: #94a3b8; font-weight: 500;">
+                                            ${new Date(lesson.date).toLocaleDateString("pt-BR")} - ${lesson.time}
+                                        </span>
+                                    </div>
+                                </div>
+
+                                <div style="display: flex; gap: 8px; flex-wrap: wrap;">
                                     <button onclick="event.stopPropagation(); window.openExerciseSelection('${lesson.id}')" 
-                                            style="background: #e0f2fe; color: var(--primary-blue); border: none; padding: 0.4rem 0.8rem; border-radius: 8px; font-size: 0.8rem; font-weight: 600; display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                                            style="background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; padding: 0.4rem 0.8rem; border-radius: 10px; font-size: 0.8rem; font-weight: 600; display: flex; align-items: center; gap: 6px; cursor: pointer;">
                                         <i data-lucide="dumbbell" style="width: 14px;"></i> Exercícios
                                     </button>
-                                    <span style="font-size: 0.85rem; background: #f1f5f9; color: #64748b; padding: 0.2rem 0.6rem; border-radius: 8px;">
-                                        ${new Date(lesson.date).toLocaleDateString("pt-BR")} - ${lesson.time}
-                                    </span>
+                                    ${lesson.exercises ? `
+                                        <div style="font-size: 0.8rem; color: #0284c7; background: #f0f9ff; padding: 4px 10px; border-radius: 10px; border: 1px solid #bae6fd; display: flex; align-items: center; gap: 4px;">
+                                            <i data-lucide="info" style="width: 12px;"></i> ${lesson.exercises}
+                                        </div>
+                                    ` : ''}
                                 </div>
                             </div>
-                            <div style="font-size: 0.9rem; color: #64748b; margin-bottom: 0.5rem;">
-                                <strong>Tema:</strong> ${lesson.theme}
+
+                            <div style="padding: 1.25rem; background: #fdfdfd;">
+                                ${(lesson.content && lesson.content.length > 0) ? `
+                                    <div style="background: white; padding: 1rem; border-radius: 12px; border: 1px solid #f1f5f9;">
+                                        <h5 style="margin: 0 0 0.75rem 0; font-size: 0.85rem; color: var(--primary-blue); font-weight: 600; text-transform: uppercase; letter-spacing: 0.025em;">Conteúdo Programado:</h5>
+                                        <div style="display: grid; gap: 8px;">
+                                            ${lesson.content.map((item, idx) => {
+            const text = typeof item === 'string' ? item : item.text;
+            const completed = typeof item === 'string' ? false : item.completed;
+            return `
+                                                    <div onclick="window.toggleContentItem('${studentId}', '${lesson.id}', ${idx})"
+                                                         style="display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: ${completed ? '#f8fafc' : '#ffffff'}; border: 1px solid ${completed ? '#f1f5f9' : '#f8fafc'}; border-radius: 8px; cursor: pointer; transition: all 0.2s;">
+                                                        <i data-lucide="${completed ? 'check-circle-2' : 'circle'}" 
+                                                           style="width: 16px; height: 16px; flex-shrink: 0; color: ${completed ? '#10b981' : '#cbd5e1'};"></i>
+                                                        <span style="font-size: 0.9rem; color: ${completed ? '#94a3b8' : '#334155'}; ${completed ? 'text-decoration: line-through;' : ''}">${text}</span>
+                                                    </div>
+                                                `;
+        }).join('')}
+                                        </div>
+                                    </div>
+                                ` : ''}
+
+                                <div style="display: flex; gap: 12px; margin-top: 1.25rem;">
+                                    <button onclick="window.toggleLessonStatus('${studentId}', '${lesson.id}')" 
+                                            class="${isFinished ? 'btn-secondary' : 'btn-primary'}"
+                                            style="flex: 1; padding: 0.6rem; font-size: 0.85rem; border-radius: 10px; display: flex; align-items: center; justify-content: center; gap: 8px;">
+                                        <i data-lucide="${isFinished ? 'rotate-ccw' : 'check'}"></i> 
+                                        ${isFinished ? 'Marcar como Pendente' : 'Concluir Aula'}
+                                    </button>
+                                    <button onclick="window.deleteLessonQuick('${studentId}', '${lesson.id}')"
+                                            style="background: #fee2e2; color: #ef4444; border: 1px solid #fecaca; padding: 0.6rem 1rem; border-radius: 10px; cursor: pointer; display: flex; align-items: center; gap: 8px;"
+                                            title="Excluir Aula">
+                                        <i data-lucide="trash-2" style="width: 18px;"></i>
+                                        <span>Excluir</span>
+                                    </button>
+                                </div>
                             </div>
-                            ${(lesson.content && lesson.content.length > 0) ? `
-                                <div style="margin-top: 0.5rem; background: white; padding: 0.8rem; border-radius: 8px; border: 1px solid #e2e8f0;">
-                                    <h5 style="margin: 0 0 0.5rem 0; font-size: 0.85rem; color: var(--primary-blue);">Conteúdo Programado:</h5>
-                                    <ul style="margin: 0; padding-left: 0.5rem; list-style: none; font-size: 0.85rem; color: #475569;">
-                                        ${lesson.content.map(item => {
-                const text = typeof item === 'string' ? item : item.text;
-                const completed = typeof item === 'string' ? false : item.completed;
-                return `
-                                                <li style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
-                                                    <i data-lucide="${completed ? 'check-circle-2' : 'circle'}" style="width: 14px; height: 14px; color: ${completed ? '#10b981' : '#cbd5e1'};"></i>
-                                                    <span style="${completed ? 'text-decoration: line-through; color: #94a3b8;' : ''}">${text}</span>
-                                                </li>
-                                            `;
-            }).join('')}
-                                    </ul>
-                                </div>
-                            ` : (lesson.exercises ? `
-                                <div style="font-size: 0.85rem; color: #475569; background: white; padding: 0.5rem; border-radius: 8px; border: 1px solid #e2e8f0;">
-                                    <i data-lucide="dumbbell" style="width: 12px; vertical-align: middle;"></i> ${lesson.exercises}
-                                </div>
-                            ` : '')}
                         </div>
-                    `).join('')}
+                    `;
+    }).join('')}
                 </div>
             `;
+}
+
+// Toggle Lesson Status (Global/Detail)
+window.toggleLessonStatus = async (studentId, lessonId) => {
+    try {
+        const lesson = lessonsData.find(l => l.id === lessonId);
+        if (!lesson) return;
+
+        const isPast = new Date(lesson.date + 'T' + (lesson.time || '00:00')) < new Date();
+        const currentStatus = lesson.status || (isPast ? 'CONCLUÍDA' : 'AGENDADA');
+        const newStatus = (currentStatus === 'CONCLUÍDA') ? 'AGENDADA' : 'CONCLUÍDA';
+
+        // Update local data
+        lesson.status = newStatus;
+
+        // Update Firestore
+        await db.collection('lessons').doc(lessonId).update({
+            status: newStatus
+        });
+
+        Toast.show(`Aula marcada como ${newStatus.toLowerCase()}!`, 'success');
+
+        // Re-render relevant view
+        const listEl = document.getElementById(`student-lessons-list-${studentId}`);
+        if (listEl) {
+            listEl.innerHTML = renderStudentLessons(studentId);
+            if (window.lucide) lucide.createIcons({ root: listEl });
         }
 
-        // Open Add Lesson Modal
-        window.openAddLessonModal = (studentId, lessonId = null) => {
-            const form = document.getElementById('form-add-lesson');
-            if (!form) return;
+        // Also check if we are in the global lessons view and refresh if so
+        const globalContainer = document.getElementById('lessons-list-container');
+        if (globalContainer) {
+            // Force a reload of the global lessons list
+            const btnAdd = document.getElementById('btn-add-lesson-global');
+            if (btnAdd) {
+                // We are in TeacherLessons view, we should probably just re-run loadLessons but it's internal.
+                // For simplicity, we can navigate back to refresh the component or just update the DOM if we had the logic here.
+                // Let's just update the local card if it exists in the global list.
+                const cards = globalContainer.querySelectorAll('.lesson-card');
+                cards.forEach(card => {
+                    // This is a bit hacky but works without refactoring the whole view
+                    if (card.innerHTML.includes(lesson.title) && card.innerHTML.includes(lesson.date)) {
+                        const badgeContainer = card.querySelector('div > div');
+                        if (badgeContainer) {
+                            badgeContainer.innerHTML = `
+                                ${newStatus === 'CONCLUÍDA' ?
+                                    '<span style="background: #f1f5f9; color: #64748b; padding: 4px 10px; border-radius: 6px; font-size: 0.75rem; font-weight: 600;">CONCLUÍDA</span>' :
+                                    '<span style="background: #e0f2fe; color: #0284c7; padding: 4px 10px; border-radius: 6px; font-size: 0.75rem; font-weight: 600;">AGENDADA</span>'}
+                                ${lesson.type === 'reinforcement' ?
+                                    '<span style="background: #fef9c3; color: #a16207; padding: 4px 10px; border-radius: 6px; font-size: 0.75rem; font-weight: 600; border: 1px solid #fef08a;">REFORÇO</span>' : ''}
+                                <span style="background: #f0fdf4; color: #15803d; padding: 4px 10px; border-radius: 6px; font-size: 0.75rem; font-weight: 600;">
+                                    <i data-lucide="user" style="width: 10px; margin-right: 4px;"></i> ${lesson.studentName || 'Aluno'}
+                                </span>
+                            `;
+                            if (window.lucide) lucide.createIcons({ root: badgeContainer });
+                        }
+                    }
+                });
+            }
+        }
+    } catch (error) {
+        console.error("Error toggling lesson status:", error);
+        Toast.show("Erro ao atualizar status da aula.", "error");
+    }
+};
+
+// Open Add Lesson Modal
+window.openAddLessonModal = (studentId, lessonId = null) => {
+    const form = document.getElementById('form-add-lesson');
+    if (!form) return;
+    form.reset();
+
+    const contentListContainer = document.getElementById('lesson-content-list');
+    if (contentListContainer) contentListContainer.innerHTML = '';
+
+    document.getElementById('input-lesson-student-id').value = studentId;
+    document.getElementById('input-lesson-id').value = lessonId || '';
+    document.getElementById('add-lesson-modal').classList.add('active');
+    if (window.lucide) lucide.createIcons();
+
+    // Re-attach Form Submission Every Time to ensure it's fresh and prevents default
+    form.onsubmit = async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const submitBtn = form.querySelector('button[type="submit"]');
+        const originalText = submitBtn.innerHTML;
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<div class="spinner-small"></div> Salvando...';
+
+        try {
+            const formData = new FormData(form);
+            const studentIdField = formData.get('l_student_id');
+            const student = studentsData.find(s => s.id === studentIdField);
+            const lessonIdField = formData.get('l_id');
+
+            const contentList = [];
+            document.querySelectorAll('#lesson-content-list .content-item').forEach(item => {
+                contentList.push({
+                    text: item.querySelector('span').textContent,
+                    completed: item.querySelector('input[type="checkbox"]').checked
+                });
+            });
+
+            const lessonPayload = {
+                studentId: studentIdField,
+                studentName: student ? student.name : 'Unknown',
+                title: formData.get('l_title'),
+                theme: formData.get('l_theme'),
+                date: formData.get('l_date'),
+                time: formData.get('l_time'),
+                content: contentList
+            };
+            if (lessonIdField) lessonPayload.id = lessonIdField;
+            else lessonPayload.createdAt = new Date().toISOString();
+
+            await addLessonToFirestore(lessonPayload);
+            window.closeLessonModal();
             form.reset();
+            const listEl = document.getElementById(`student-lessons-list-${studentIdField}`);
+            if (listEl) listEl.innerHTML = renderStudentLessons(studentIdField);
+            Toast.show('Aula salva com sucesso!', 'success');
+        } catch (err) {
+            console.error("Error saving lesson:", err);
+            Toast.show('Erro ao salvar aula.', 'error');
+        } finally {
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = originalText;
+        }
+    };
 
-            const contentListContainer = document.getElementById('lesson-content-list');
-            if (contentListContainer) contentListContainer.innerHTML = '';
+    const titleEl = document.querySelector('#add-lesson-modal h2');
+    const submitBtn = document.querySelector('#add-lesson-modal button[type="submit"]');
+    const deleteBtn = document.getElementById('btn-delete-lesson');
+    // Helper to add item to DOM
+    window.addItemToLessonDom = (text, completed = false) => {
+        const container = document.getElementById('lesson-content-list');
+        if (!container) return;
+        const div = document.createElement('div');
+        div.className = 'content-item';
+        div.style.cssText = `background: ${completed ? '#f1f5f9' : '#f8fafc'}; padding: 0.5rem 0.8rem; border-radius: 8px; border: 1px solid #e2e8f0; display: flex; align-items: center; gap: 10px; font-size: 0.9rem; transition: background 0.2s;`;
 
-            document.getElementById('input-lesson-student-id').value = studentId;
-            document.getElementById('input-lesson-id').value = lessonId || '';
-            document.getElementById('add-lesson-modal').classList.add('active');
-
-            const titleEl = document.querySelector('#add-lesson-modal h2');
-            const submitBtn = document.querySelector('#add-lesson-modal button[type="submit"]');
-            const deleteBtn = document.getElementById('btn-delete-lesson');
-            // Helper to add item to DOM
-            const addItemToDom = (text, completed = false) => {
-                const container = document.getElementById('lesson-content-list');
-                const div = document.createElement('div');
-                div.className = 'content-item';
-                div.style.cssText = `background: ${completed ? '#f1f5f9' : '#f8fafc'}; padding: 0.5rem 0.8rem; border-radius: 8px; border: 1px solid #e2e8f0; display: flex; align-items: center; gap: 10px; font-size: 0.9rem; transition: background 0.2s;`;
-
-                div.innerHTML = `
+        div.innerHTML = `
                     <input type="checkbox" ${completed ? 'checked' : ''} style="cursor: pointer; width: 16px; height: 16px;">
                     <span style="flex: 1; ${completed ? 'text-decoration: line-through; color: #94a3b8;' : 'color: #334155;'}">${text}</span>
                     <button type="button" style="color: #ef4444; background: none; border: none; cursor: pointer; padding: 4px; display: flex; align-items: center;">
@@ -1028,271 +1197,220 @@ export const TeacherStudents = {
                     </button>
                 `;
 
-                const checkbox = div.querySelector('input[type="checkbox"]');
-                const span = div.querySelector('span');
+        const checkbox = div.querySelector('input[type="checkbox"]');
+        const span = div.querySelector('span');
 
-                checkbox.onchange = () => {
-                    if (checkbox.checked) {
-                        span.style.textDecoration = 'line-through';
-                        span.style.color = '#94a3b8';
-                        div.style.background = '#f1f5f9';
-                    } else {
-                        span.style.textDecoration = 'none';
-                        span.style.color = '#334155';
-                        div.style.background = '#f8fafc';
-                    }
-                };
-
-                div.querySelector('button').onclick = () => div.remove();
-                container.appendChild(div);
-                if (window.lucide) lucide.createIcons();
-
-                // Auto-scroll to bottom
-                container.scrollTop = container.scrollHeight;
-            };
-
-            if (lessonId) {
-                // Edit Mode
-                const lesson = lessonsData.find(l => l.id === lessonId);
-                if (lesson) {
-                    form.querySelector('[name="l_title"]').value = lesson.title;
-                    form.querySelector('[name="l_theme"]').value = lesson.theme;
-
-                    if (lesson.content && Array.isArray(lesson.content)) {
-                        lesson.content.forEach(item => {
-                            if (typeof item === 'string') {
-                                addItemToDom(item);
-                            } else {
-                                addItemToDom(item.text, item.completed);
-                            }
-                        });
-                    } else if (lesson.exercises) {
-                        addItemToDom(lesson.exercises);
-                    }
-
-                    document.getElementById('input-lesson-date-visual').value = new Date(lesson.date).toLocaleDateString('pt-BR');
-                    document.getElementById('input-lesson-date-hidden').value = lesson.date;
-
-                    if (window.lessonDatePicker) {
-                        const [y, m, d] = lesson.date.split('-');
-                        window.lessonDatePicker.date = new Date(y, m - 1, d);
-                        window.lessonDatePicker.input.dataset.value = lesson.date;
-                    }
-
-                    document.getElementById('input-lesson-time').value = lesson.time;
-
-                    titleEl.textContent = 'Editar Aula';
-                    submitBtn.textContent = 'Salvar Alterações';
-
-                    if (deleteBtn) {
-                        deleteBtn.style.display = 'block';
-                        deleteBtn.onclick = async () => {
-                            const confirmed = await modal.confirm({
-                                title: 'Excluir Aula',
-                                message: 'Tem certeza que deseja excluir esta aula? Esta ação não pode ser desfeita.',
-                                type: 'error',
-                                confirmText: 'Excluir',
-                                cancelText: 'Manter Aula'
-                            });
-
-                            if (confirmed) {
-                                await deleteLessonFromFirestore(studentId, lessonId);
-                                closeLessonModal();
-                                const listEl = document.getElementById(`student-lessons-list-${studentId}`);
-                                if (listEl) listEl.innerHTML = renderStudentLessons(studentId);
-                            }
-                        };
-                    }
-                }
+        checkbox.onchange = () => {
+            if (checkbox.checked) {
+                span.style.textDecoration = 'line-through';
+                span.style.color = '#94a3b8';
+                div.style.background = '#f1f5f9';
             } else {
-                // Create Mode
-                titleEl.textContent = 'Nova Aula';
-                submitBtn.textContent = 'Agendar Aula';
-                if (deleteBtn) deleteBtn.style.display = 'none';
+                span.style.textDecoration = 'none';
+                span.style.color = '#334155';
+                div.style.background = '#f8fafc';
             }
-
-            if (!window.lessonDatePicker) {
-                const dateInput = document.getElementById('input-lesson-date-visual');
-                const hiddenInput = document.getElementById('input-lesson-date-hidden');
-
-                if (dateInput) {
-                    window.lessonDatePicker = new DatePicker('input-lesson-date-visual');
-
-                    // Sync with hidden input for form submission
-                    dateInput.addEventListener('change', () => {
-                        hiddenInput.value = window.lessonDatePicker.getValue();
-                    });
-                }
-
-                const timeInput = document.getElementById('input-lesson-time');
-                if (timeInput) {
-                    new TimePicker('input-lesson-time');
-                }
-            }
-
-            // Attach Content Event
-            const btnAdd = document.getElementById('btn-add-content');
-            const inputContent = document.getElementById('input-content-item');
-            if (btnAdd && inputContent) {
-                btnAdd.onclick = () => {
-                    const text = inputContent.value.trim();
-                    if (text) {
-                        addItemToDom(text);
-                        inputContent.value = '';
-                        inputContent.focus();
-                    }
-                };
-                inputContent.onkeypress = (e) => {
-                    if (e.key === 'Enter') {
-                        e.preventDefault();
-                        btnAdd.click();
-                    }
-                };
-            }
-            if (window.lucide) lucide.createIcons();
         };
 
-        const closeLessonModal = () => {
-            document.getElementById('add-lesson-modal').classList.remove('active');
-        };
+        div.querySelector('button').onclick = () => div.remove();
+        container.appendChild(div);
+        if (window.lucide) lucide.createIcons();
 
-        const btnCloseLesson = document.getElementById('btn-close-lesson-modal');
-        const btnCancelLesson = document.getElementById('btn-cancel-lesson');
-        if (btnCloseLesson) btnCloseLesson.onclick = closeLessonModal;
-        if (btnCancelLesson) btnCancelLesson.onclick = closeLessonModal;
+        // Auto-scroll to bottom
+        container.scrollTop = container.scrollHeight;
+    };
 
-        const formLesson = document.getElementById('form-add-lesson');
-        if (formLesson) {
-            formLesson.onsubmit = async (e) => {
-                e.preventDefault();
-                const formData = new FormData(formLesson);
-                const studentId = formData.get('l_student_id');
-                const student = studentsData.find(s => s.id === studentId);
-                const lessonId = formData.get('l_id');
+    if (lessonId) {
+        // Edit Mode
+        const lesson = lessonsData.find(l => l.id === lessonId);
+        if (lesson) {
+            form.querySelector('[name="l_title"]').value = lesson.title;
+            form.querySelector('[name="l_theme"]').value = lesson.theme;
 
-                // Gather Content List (with completion status)
-                const contentList = [];
-                document.querySelectorAll('#lesson-content-list .content-item').forEach(item => {
-                    contentList.push({
-                        text: item.querySelector('span').textContent,
-                        completed: item.querySelector('input[type="checkbox"]').checked
-                    });
+            if (lesson.content && Array.isArray(lesson.content)) {
+                lesson.content.forEach(item => {
+                    if (typeof item === 'string') {
+                        window.addItemToLessonDom(item);
+                    } else {
+                        window.addItemToLessonDom(item.text, item.completed);
+                    }
                 });
+            } else if (lesson.exercises) {
+                window.addItemToLessonDom(lesson.exercises);
+            }
 
-                const lessonPayload = {
-                    studentId: studentId,
-                    studentName: student ? student.name : 'Unknown',
-                    title: formData.get('l_title'),
-                    theme: formData.get('l_theme'),
-                    date: formData.get('l_date'),
-                    time: formData.get('l_time'),
-                    content: contentList
+            document.getElementById('input-lesson-date-visual').value = new Date(lesson.date).toLocaleDateString('pt-BR');
+            document.getElementById('input-lesson-date-hidden').value = lesson.date;
+
+            if (window.lessonDatePicker) {
+                const [y, m, d] = lesson.date.split('-');
+                window.lessonDatePicker.date = new Date(y, m - 1, d);
+                window.lessonDatePicker.input.dataset.value = lesson.date;
+            }
+
+            document.getElementById('input-lesson-time').value = lesson.time;
+
+            titleEl.textContent = 'Editar Aula';
+            submitBtn.textContent = 'Salvar Alterações';
+
+            if (deleteBtn) {
+                deleteBtn.style.display = 'block';
+                deleteBtn.onclick = async () => {
+                    const confirmed = await modal.confirm({
+                        title: 'Excluir Aula',
+                        message: 'Tem certeza que deseja excluir esta aula? Esta ação não pode ser desfeita.',
+                        type: 'error',
+                        confirmText: 'Excluir',
+                        cancelText: 'Manter Aula'
+                    });
+
+                    if (confirmed) {
+                        await deleteLessonFromFirestore(studentId, lessonId);
+                        window.closeLessonModal();
+                        const listEl = document.getElementById(`student-lessons-list-${studentId}`);
+                        if (listEl) listEl.innerHTML = renderStudentLessons(studentId);
+                    }
                 };
-                if (lessonId) {
-                    lessonPayload.id = lessonId;
-                } else {
-                    lessonPayload.createdAt = new Date().toISOString();
-                }
+            }
+        }
+    } else {
+        // Create Mode
+        titleEl.textContent = 'Nova Aula';
+        submitBtn.textContent = 'Agendar Aula';
+        if (deleteBtn) deleteBtn.style.display = 'none';
+    }
 
-                await addLessonToFirestore(lessonPayload);
-                closeLessonModal();
-                formLesson.reset();
+    if (!window.lessonDatePicker) {
+        const dateInput = document.getElementById('input-lesson-date-visual');
+        const hiddenInput = document.getElementById('input-lesson-date-hidden');
 
-                const listEl = document.getElementById(`student-lessons-list-${studentId}`);
-                if (listEl) listEl.innerHTML = renderStudentLessons(studentId);
-            };
+        if (dateInput) {
+            window.lessonDatePicker = new DatePicker('input-lesson-date-visual');
+
+            // Sync with hidden input for form submission
+            dateInput.addEventListener('change', () => {
+                hiddenInput.value = window.lessonDatePicker.getValue();
+            });
         }
 
-        // --- EXERCISE SELECTION MODAL LOGIC ---
-        const exerciseModal = document.getElementById('exercise-selection-modal');
-        let currentLessonIdForExercises = null;
+        const timeInput = document.getElementById('input-lesson-time');
+        if (timeInput) {
+            new TimePicker('input-lesson-time');
+        }
+    }
 
-        window.openExerciseSelection = (lessonId) => {
-            currentLessonIdForExercises = lessonId;
-            if (exerciseModal) {
-                exerciseModal.classList.add('active');
-                if (window.lucide) lucide.createIcons();
+    // Attach Content Event
+    const btnAdd = document.getElementById('btn-add-content');
+    const inputContent = document.getElementById('input-content-item');
+    if (btnAdd && inputContent) {
+        btnAdd.onclick = () => {
+            const text = inputContent.value.trim();
+            if (text) {
+                window.addItemToLessonDom(text);
+                inputContent.value = '';
+                inputContent.focus();
             }
         };
-
-        const closeExerciseModal = () => {
-            if (exerciseModal) exerciseModal.classList.remove('active');
+        inputContent.onkeypress = (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                btnAdd.click();
+            }
         };
+    }
+    if (window.lucide) lucide.createIcons();
+};
 
-        const btnCloseSelection = document.getElementById('btn-close-exercise-selection');
-        if (btnCloseSelection) btnCloseSelection.onclick = closeExerciseModal;
+// --- EXERCISE SELECTION MODAL LOGIC ---
+const exerciseModal = document.getElementById('exercise-selection-modal');
+let currentLessonIdForExercises = null;
 
-        if (exerciseModal) {
-            exerciseModal.onclick = (e) => {
-                if (e.target === exerciseModal) closeExerciseModal();
-            };
+window.openExerciseSelection = (lessonId) => {
+    currentLessonIdForExercises = lessonId;
+    if (exerciseModal) {
+        exerciseModal.classList.add('active');
+        if (window.lucide) lucide.createIcons();
+    }
+};
+
+const closeExerciseModal = () => {
+    if (exerciseModal) exerciseModal.classList.remove('active');
+};
+
+const btnCloseSelection = document.getElementById('btn-close-exercise-selection');
+if (btnCloseSelection) btnCloseSelection.onclick = closeExerciseModal;
+
+if (exerciseModal) {
+    exerciseModal.onclick = (e) => {
+        if (e.target === exerciseModal) closeExerciseModal();
+    };
+}
+
+const btnManual = document.getElementById('btn-create-manual-exercise');
+if (btnManual) {
+    btnManual.onclick = () => {
+        closeExerciseModal();
+        navigate('teacher-exercises');
+        // Optional: scroll to show catalog is active
+        setTimeout(() => {
+            const view = document.getElementById('teacher-exercises-view');
+            if (view) view.scrollIntoView({ behavior: 'smooth' });
+        }, 100);
+    };
+}
+
+const btnAI = document.getElementById('btn-create-ai-exercise');
+if (btnAI) {
+    btnAI.onclick = () => {
+        closeExerciseModal();
+        // For now, open Lyra chat or similar
+        if (window.chatWidget) {
+            window.chatWidget.open();
+            window.chatWidget.addMessage(`Olá! Vamos criar exercícios para a aula ${currentLessonIdForExercises}. Que tipo de atividade você tem em mente?`, 'bot');
         }
+    };
+}
 
-        const btnManual = document.getElementById('btn-create-manual-exercise');
-        if (btnManual) {
-            btnManual.onclick = () => {
-                closeExerciseModal();
-                navigate('teacher-exercises');
-                // Optional: scroll to show catalog is active
-                setTimeout(() => {
-                    const view = document.getElementById('teacher-exercises-view');
-                    if (view) view.scrollIntoView({ behavior: 'smooth' });
-                }, 100);
-            };
-        }
+// --- USE EXISTING EXERCISE LOGIC ---
+const btnUseExisting = document.getElementById('btn-use-existing-exercise');
+const modalSelectExercise = document.getElementById('select-existing-exercise-modal');
+const exerciseListContainer = document.getElementById('existing-exercises-list');
+const btnCloseSelectExercise = document.getElementById('btn-close-select-exercise');
 
-        const btnAI = document.getElementById('btn-create-ai-exercise');
-        if (btnAI) {
-            btnAI.onclick = () => {
-                closeExerciseModal();
-                // For now, open Lyra chat or similar
-                if (window.chatWidget) {
-                    window.chatWidget.open();
-                    window.chatWidget.addMessage(`Olá! Vamos criar exercícios para a aula ${currentLessonIdForExercises}. Que tipo de atividade você tem em mente?`, 'bot');
-                }
-            };
-        }
+const closeSelectExerciseModal = () => {
+    if (modalSelectExercise) modalSelectExercise.classList.remove('active');
+};
 
-        // --- USE EXISTING EXERCISE LOGIC ---
-        const btnUseExisting = document.getElementById('btn-use-existing-exercise');
-        const modalSelectExercise = document.getElementById('select-existing-exercise-modal');
-        const exerciseListContainer = document.getElementById('existing-exercises-list');
-        const btnCloseSelectExercise = document.getElementById('btn-close-select-exercise');
+if (btnCloseSelectExercise) btnCloseSelectExercise.onclick = closeSelectExerciseModal;
+if (modalSelectExercise) modalSelectExercise.onclick = (e) => {
+    if (e.target === modalSelectExercise) closeSelectExerciseModal();
+};
 
-        const closeSelectExerciseModal = () => {
-            if (modalSelectExercise) modalSelectExercise.classList.remove('active');
-        };
+// Mock Data
+const mockExercises = [
+    { id: 'ex-001', title: 'Verb To Be - Basics', type: 'Múltipla Escolha', level: 'A1' },
+    { id: 'ex-002', title: 'Daily Routine Vocabulary', type: 'Associação de Imagens', level: 'A1' },
+    { id: 'ex-003', title: 'Present Continuous Practice', type: 'Preencher Lacunas', level: 'A2' },
+    { id: 'ex-004', title: 'Travel Dialogues', type: 'Resposta Oral', level: 'B1' },
+    { id: 'ex-005', title: 'Business Email Writing', type: 'Correção de Erros', level: 'B2' }
+];
 
-        if (btnCloseSelectExercise) btnCloseSelectExercise.onclick = closeSelectExerciseModal;
-        if (modalSelectExercise) modalSelectExercise.onclick = (e) => {
-            if (e.target === modalSelectExercise) closeSelectExerciseModal();
-        };
+const renderExerciseList = (filter = '') => {
+    if (!exerciseListContainer) return;
+    const filtered = mockExercises.filter(ex =>
+        ex.title.toLowerCase().includes(filter.toLowerCase()) ||
+        ex.type.toLowerCase().includes(filter.toLowerCase())
+    );
 
-        // Mock Data
-        const mockExercises = [
-            { id: 'ex-001', title: 'Verb To Be - Basics', type: 'Múltipla Escolha', level: 'A1' },
-            { id: 'ex-002', title: 'Daily Routine Vocabulary', type: 'Associação de Imagens', level: 'A1' },
-            { id: 'ex-003', title: 'Present Continuous Practice', type: 'Preencher Lacunas', level: 'A2' },
-            { id: 'ex-004', title: 'Travel Dialogues', type: 'Resposta Oral', level: 'B1' },
-            { id: 'ex-005', title: 'Business Email Writing', type: 'Correção de Erros', level: 'B2' }
-        ];
-
-        const renderExerciseList = (filter = '') => {
-            if (!exerciseListContainer) return;
-            const filtered = mockExercises.filter(ex =>
-                ex.title.toLowerCase().includes(filter.toLowerCase()) ||
-                ex.type.toLowerCase().includes(filter.toLowerCase())
-            );
-
-            if (filtered.length === 0) {
-                exerciseListContainer.innerHTML = `
+    if (filtered.length === 0) {
+        exerciseListContainer.innerHTML = `
                     <div style="text-align: center; color: #94a3b8; padding: 2rem;">
                         <i data-lucide="search-x" style="width: 48px; height: 48px; opacity: 0.5;"></i>
                         <p>Nenhum exercício encontrado.</p>
                     </div>
                 `;
-            } else {
-                exerciseListContainer.innerHTML = filtered.map(ex => `
+    } else {
+        exerciseListContainer.innerHTML = filtered.map(ex => `
                     <div class="exercise-list-item" onclick="window.selectExerciseForLesson('${ex.id}', '${ex.title}')">
                         <div>
                             <h4>${ex.title}</h4>
@@ -1301,56 +1419,54 @@ export const TeacherStudents = {
                         <i data-lucide="plus-circle" style="color: var(--primary-blue); width: 20px;"></i>
                     </div>
                 `).join('');
-            }
-            if (window.lucide) lucide.createIcons({ root: exerciseListContainer });
-        };
+    }
+    if (window.lucide) lucide.createIcons({ root: exerciseListContainer });
+};
 
-        if (btnUseExisting) {
-            btnUseExisting.onclick = () => {
-                closeExerciseModal();
-                if (modalSelectExercise) {
-                    modalSelectExercise.classList.add('active');
-                    renderExerciseList();
-                    document.getElementById('input-search-exercise').focus();
-                }
-            };
+if (btnUseExisting) {
+    btnUseExisting.onclick = () => {
+        closeExerciseModal();
+        if (modalSelectExercise) {
+            modalSelectExercise.classList.add('active');
+            renderExerciseList();
+            document.getElementById('input-search-exercise').focus();
         }
+    };
+}
 
-        const inputSearch = document.getElementById('input-search-exercise');
-        if (inputSearch) {
-            inputSearch.oninput = (e) => renderExerciseList(e.target.value);
+const inputSearch = document.getElementById('input-search-exercise');
+if (inputSearch) {
+    inputSearch.oninput = (e) => renderExerciseList(e.target.value);
+}
+
+// Global function to handle selection
+window.selectExerciseForLesson = async (exerciseId, exerciseTitle) => {
+    if (!currentLessonIdForExercises) return;
+
+    try {
+        // Find lesson and update
+        const lesson = lessonsData.find(l => l.id === currentLessonIdForExercises);
+        if (lesson) {
+            // Update local mockup
+            if (!lesson.exercises) lesson.exercises = "";
+            lesson.exercises = lesson.exercises ? `${lesson.exercises}, ${exerciseTitle}` : exerciseTitle;
+
+            // Update Firestore (Simplified for now, just appending title)
+            await db.collection('lessons').doc(lesson.id).update({
+                exercises: lesson.exercises
+            });
+
+            Toast.show(`Exercício "${exerciseTitle}" adicionado à aula!`, 'success');
+            closeSelectExerciseModal();
+
+            // Refresh View
+            const studentId = lesson.studentId;
+            const listEl = document.getElementById(`student-lessons-list-${studentId}`);
+            if (listEl) listEl.innerHTML = renderStudentLessons(studentId);
         }
-
-        // Global function to handle selection
-        window.selectExerciseForLesson = async (exerciseId, exerciseTitle) => {
-            if (!currentLessonIdForExercises) return;
-
-            try {
-                // Find lesson and update
-                const lesson = lessonsData.find(l => l.id === currentLessonIdForExercises);
-                if (lesson) {
-                    // Update local mockup
-                    if (!lesson.exercises) lesson.exercises = "";
-                    lesson.exercises = lesson.exercises ? `${lesson.exercises}, ${exerciseTitle}` : exerciseTitle;
-
-                    // Update Firestore (Simplified for now, just appending title)
-                    await db.collection('lessons').doc(lesson.id).update({
-                        exercises: lesson.exercises
-                    });
-
-                    Toast.show(`Exercício "${exerciseTitle}" adicionado à aula!`, 'success');
-                    closeSelectExerciseModal();
-
-                    // Refresh View
-                    const studentId = lesson.studentId;
-                    const listEl = document.getElementById(`student-lessons-list-${studentId}`);
-                    if (listEl) listEl.innerHTML = renderStudentLessons(studentId);
-                }
-            } catch (error) {
-                console.error("Error linking exercise:", error);
-                Toast.show("Erro ao vincular exercício.", "error");
-            }
-        };
+    } catch (error) {
+        console.error("Error linking exercise:", error);
+        Toast.show("Erro ao vincular exercício.", "error");
     }
 };
 
@@ -1549,9 +1665,9 @@ export const TeacherLessons = {
                             <div class="lesson-card" style="background: white; padding: 1.5rem; border-radius: 12px; border: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
                                 <div>
                                     <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem; flex-wrap: wrap;">
-                                        ${isPast ?
-                            '<span style="background: #f1f5f9; color: #64748b; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600;">CONCLUÍDA</span>' :
-                            '<span style="background: #e0f2fe; color: #0284c7; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600;">AGENDADA</span>'}
+                                        ${lesson.status === 'CONCLUÍDA' || (isPast && lesson.status !== 'AGENDADA') ?
+                            '<span style="background: #f1f5f9; color: #64748b; padding: 4px 10px; border-radius: 6px; font-size: 0.75rem; font-weight: 600;">CONCLUÍDA</span>' :
+                            '<span style="background: #e0f2fe; color: #0284c7; padding: 4px 10px; border-radius: 6px; font-size: 0.75rem; font-weight: 600;">AGENDADA</span>'}
                                         ${isReinforcement ?
                             '<span style="background: #fef9c3; color: #a16207; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; border: 1px solid #fef08a;">REFORÇO</span>' : ''}
                                         <span style="background: #f0fdf4; color: #15803d; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600;">
