@@ -769,7 +769,7 @@ export const TeacherStudents = {
         if (lessonsData.length === 0) fetchLessons();
 
         // --- Detail View Logic ---
-        window.openStudentDetail = (id) => {
+        window.openStudentDetail = async (id) => {
             const student = studentsData.find(s => s.id === id);
             if (!student) return;
 
@@ -780,7 +780,8 @@ export const TeacherStudents = {
             if (detailContainer) {
                 detailContainer.style.display = 'block';
 
-                // Render Detail Content
+                // Force Refresh Lessons to ensure we have any student-created reinforcement classes
+                await fetchLessons();
                 detailContainer.innerHTML = `
                     <div class="header-bar" style="margin-left: 0.5rem;">
                         <div style="display: flex; align-items: center; gap: 12px;">
@@ -1662,25 +1663,27 @@ export const TeacherLessons = {
                     const isReinforcement = lesson.type === 'reinforcement';
 
                     return `
-                            <div class="lesson-card" style="background: white; padding: 1.5rem; border-radius: 12px; border: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
-                                <div>
-                                    <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem; flex-wrap: wrap;">
-                                        ${lesson.status === 'CONCLUÍDA' || (isPast && lesson.status !== 'AGENDADA') ?
+                                <div onclick="window.openAddLessonModal('${lesson.studentId}', '${lesson.id}')" 
+                                     style="background: white; padding: 1.5rem; border-radius: 12px; border: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 4px rgba(0,0,0,0.02); cursor: pointer;">
+                                    <div>
+                                        <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem; flex-wrap: wrap;">
+                                            ${lesson.status === 'CONCLUÍDA' || (isPast && lesson.status !== 'AGENDADA') ?
                             '<span style="background: #f1f5f9; color: #64748b; padding: 4px 10px; border-radius: 6px; font-size: 0.75rem; font-weight: 600;">CONCLUÍDA</span>' :
                             '<span style="background: #e0f2fe; color: #0284c7; padding: 4px 10px; border-radius: 6px; font-size: 0.75rem; font-weight: 600;">AGENDADA</span>'}
-                                        ${isReinforcement ?
+                                            ${isReinforcement ?
                             '<span style="background: #fef9c3; color: #a16207; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; border: 1px solid #fef08a;">REFORÇO</span>' : ''}
-                                        <span style="background: #f0fdf4; color: #15803d; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600;">
-                                            <i data-lucide="user" style="width: 10px; margin-right: 4px;"></i> ${studentName}
-                                        </span>
+                                            <span style="background: #f0fdf4; color: #15803d; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600;">
+                                                <i data-lucide="user" style="width: 10px; margin-right: 4px;"></i> ${studentName}
+                                            </span>
+                                        </div>
+                                        <h4 style="margin-bottom: 0.5rem; font-size: 1.1rem; color: #1e293b;">${lesson.title}</h4>
+                                        <div style="font-size: 0.9rem; color: #64748b; display: flex; gap: 16px; align-items: center;">
+                                            <span style="display: flex; align-items: center; gap: 6px;"><i data-lucide="calendar" style="width: 14px;"></i> ${lesson.date}</span>
+                                            <span style="display: flex; align-items: center; gap: 6px;"><i data-lucide="clock" style="width: 14px;"></i> ${lesson.time}</span>
+                                        </div>
                                     </div>
-                                    <h4 style="margin-bottom: 0.5rem; font-size: 1.1rem; color: #1e293b;">${lesson.title}</h4>
-                                    <div style="font-size: 0.9rem; color: #64748b; display: flex; gap: 16px; align-items: center;">
-                                        <span style="display: flex; align-items: center; gap: 6px;"><i data-lucide="calendar" style="width: 14px;"></i> ${lesson.date}</span>
-                                        <span style="display: flex; align-items: center; gap: 6px;"><i data-lucide="clock" style="width: 14px;"></i> ${lesson.time}</span>
-                                    </div>
+                                    <i data-lucide="edit-3" style="color: #cbd5e1; width: 20px;"></i>
                                 </div>
-                            </div>
                         `;
                 }).join('')}
                     </div>

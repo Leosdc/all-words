@@ -531,8 +531,10 @@ export const StudentDashboard = {
                 await db.collection('lessons').add({
                     teacherUid: teacherUid || null,
                     studentId: studentId || null,
+                    studentName: user.displayName || user.email.split('@')[0],
                     userUid: user.uid || null,
                     title: title || 'Aula de Reforço',
+                    theme: 'Reforço',
                     date: date || null,
                     time: time || null,
                     type: 'reinforcement',
