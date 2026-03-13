@@ -8,7 +8,7 @@ export const Sidebar = {
         if (role === 'student') {
             return `
                 <aside class="sidebar">
-                    <div class="logo-text" style="margin-bottom: 3rem;">All Words</div>
+                    <div class="logo-text" style="margin-bottom: 3rem; line-height: 1.2;">ALL WORDS<br><span style="font-size: 0.45em; opacity: 0.6; display: block;">STUDENT</span></div>
                     <nav>
                         <div class="nav-item ${activeItem === 'dash' ? 'active' : ''}" id="nav-dash"><i data-lucide="layout-dashboard"></i> Dashboard</div>
                         <div class="nav-item ${activeItem === 'classes' ? 'active' : ''}" id="nav-classes"><i data-lucide="book-open"></i> Minhas Aulas</div>

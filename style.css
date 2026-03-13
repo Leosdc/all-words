@@ -807,6 +807,16 @@ body:not(.flag-theme) {
     /* Darker green for teacher sidebar */
 }
 
+.student-dash .sidebar {
+    background: #1e3a8a;
+    /* Deep blue for student sidebar */
+}
+
+.admin-dash .sidebar {
+    background: #0f172a;
+    /* Default dark for admin sidebar */
+}
+
 .card-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));

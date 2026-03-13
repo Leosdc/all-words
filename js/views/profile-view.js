@@ -23,7 +23,7 @@ export const ProfileModal = {
                             <label>Nome Completo</label>
                             <div class="input-wrapper">
                                 <i data-lucide="user"></i>
-                                <input type="text" id="profile-name" value="${user.displayName || ''}" placeholder="Como devemos te chamar?" required>
+                                <input type="text" id="profile-name" name="displayName" autocomplete="name" value="${user.displayName || ''}" placeholder="Como devemos te chamar?" required>
                             </div>
                         </div>
 
@@ -31,7 +31,7 @@ export const ProfileModal = {
                             <label>WhatsApp (Opcional)</label>
                             <div class="input-wrapper">
                                 <i data-lucide="phone"></i>
-                                <input type="tel" id="profile-whatsapp" value="${user.whatsapp || ''}" placeholder="(DDD) 99999-9999">
+                                <input type="tel" id="profile-whatsapp" name="whatsapp" autocomplete="tel" value="${user.whatsapp || ''}" placeholder="(DDD) 99999-9999">
                             </div>
                             <small style="color: #94a3b8; font-size: 0.8rem; margin-top: 0.4rem; display: block; padding-left: 0.5rem;">Usado para avisos de aulas e suporte.</small>
                         </div>
@@ -50,7 +50,7 @@ export const ProfileModal = {
                                     <label>Nova Senha</label>
                                     <div class="input-wrapper" style="background: white;">
                                         <i data-lucide="key"></i>
-                                        <input type="password" id="new-password" placeholder="Mínimo 6 caracteres">
+                                        <input type="password" id="new-password" name="new-password" autocomplete="new-password" placeholder="Mínimo 6 caracteres">
                                     </div>
                                 </div>
                                 <button type="button" class="btn-submit" id="btn-save-password" style="margin-top: 0; padding: 0.8rem; background: var(--dark); font-size: 0.95rem;">

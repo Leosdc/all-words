@@ -7,7 +7,7 @@ import { ProfileModal } from './profile-view.js';
 export const AdminView = {
     render: (user) => {
         return `
-            <section id="admin-view" class="view active">
+            <section id="admin-view" class="view active admin-dash">
                 <div class="dashboard-layout">
                     ${Sidebar.render(user, 'admin-users')}
                     <main class="main-content">

@@ -17,14 +17,14 @@ export const LoginView = {
                                 <label>E-mail</label>
                                 <div class="input-wrapper">
                                     <i data-lucide="mail"></i>
-                                    <input type="email" id="login-email" required placeholder="seu@email.com">
+                                    <input type="email" id="login-email" name="email" autocomplete="username" required placeholder="seu@email.com">
                                 </div>
                             </div>
                             <div class="input-group">
                                 <label>Senha</label>
                                 <div class="input-wrapper">
                                     <i data-lucide="lock"></i>
-                                    <input type="password" id="login-password" required placeholder="••••••••">
+                                    <input type="password" id="login-password" name="password" autocomplete="current-password" required placeholder="••••••••">
                                 </div>
                             </div>
                             <button type="submit" class="btn-submit">Entrar</button>
@@ -76,21 +76,21 @@ export const RegisterView = {
                                 <label>Nome Completo</label>
                                 <div class="input-wrapper">
                                     <i data-lucide="user"></i>
-                                    <input type="text" id="reg-name" required placeholder="Seu nome">
+                                    <input type="text" id="reg-name" name="full-name" autocomplete="name" required placeholder="Seu nome">
                                 </div>
                             </div>
                             <div class="input-group">
                                 <label>E-mail</label>
                                 <div class="input-wrapper">
                                     <i data-lucide="mail"></i>
-                                    <input type="email" id="reg-email" required placeholder="seu@email.com">
+                                    <input type="email" id="reg-email" name="email" autocomplete="email" required placeholder="seu@email.com">
                                 </div>
                             </div>
                             <div class="input-group">
                                 <label>Senha</label>
                                 <div class="input-wrapper">
                                     <i data-lucide="lock"></i>
-                                    <input type="password" id="reg-password" required placeholder="••••••••">
+                                    <input type="password" id="reg-password" name="password" autocomplete="new-password" required placeholder="••••••••">
                                 </div>
                             </div>
                             <div id="teacher-selection-group" style="display: none;">
@@ -105,7 +105,7 @@ export const RegisterView = {
                                         <div class="custom-select-options" id="teacher-options">
                                             <div class="select-option disabled">Carregando professores...</div>
                                         </div>
-                                        <input type="hidden" id="reg-teacher" required>
+                                        <input type="hidden" id="reg-teacher" name="teacher-uid" required>
                                     </div>
                                 </div>
                             </div>

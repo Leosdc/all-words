@@ -580,11 +580,11 @@ export const TeacherStudents = {
                                     <input type="hidden" name="l_id" id="input-lesson-id">
                                     <div class="form-group">
                                         <label>Título da Aula</label>
-                                        <input type="text" name="l_title" class="form-input" required placeholder="Ex: Aula 01 - Verb To Be">
+                                        <input type="text" name="l_title" id="input-l-title" class="form-input" required placeholder="Ex: Aula 01 - Verb To Be">
                                     </div>
                                     <div class="form-group">
                                         <label>Tema Central</label>
-                                        <input type="text" name="l_theme" class="form-input" required placeholder="Ex: Gramática Básica">
+                                        <input type="text" name="l_theme" id="input-l-theme" class="form-input" required placeholder="Ex: Gramática Básica">
                                     </div>
                                     <div class="form-group" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
                                         <div>
@@ -669,21 +669,21 @@ export const TeacherStudents = {
                                     <input type="hidden" id="edit-student-id">
                                     <div class="form-group">
                                         <label>Nome Completo</label>
-                                        <input type="text" id="edit-student-name" class="form-input" required>
+                                        <input type="text" id="edit-student-name" name="full-name" class="form-input" required>
                                     </div>
                                     <div class="form-group">
                                         <label>E-mail</label>
-                                        <input type="email" id="edit-student-email" class="form-input" required readonly style="background: #f1f5f9; cursor: not-allowed;">
+                                        <input type="email" id="edit-student-email" name="email" class="form-input" required readonly style="background: #f1f5f9; cursor: not-allowed;">
                                     </div>
                                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
                                         <div class="form-group">
                                             <label>Idade</label>
-                                            <input type="number" id="edit-student-age" class="form-input">
+                                            <input type="number" id="edit-student-age" name="age" class="form-input">
                                         </div>
                                         <div class="form-group">
                                             <label>Nível</label>
                                             <div style="position: relative;">
-                                                <select id="edit-student-level" class="form-input" style="appearance: none; -webkit-appearance: none; padding-right: 2.5rem;">
+                                                <select id="edit-student-level" name="level" class="form-input" style="appearance: none; -webkit-appearance: none; padding-right: 2.5rem;">
                                                     <option value="A1">A1 - Iniciante</option>
                                                     <option value="A2">A2 - Básico</option>
                                                     <option value="B1">B1 - Intermediário</option>
@@ -698,7 +698,7 @@ export const TeacherStudents = {
                                     <div class="form-group">
                                         <label>Status do Aluno</label>
                                         <div style="position: relative;">
-                                            <select id="edit-student-status" class="form-input" style="appearance: none; -webkit-appearance: none; padding-right: 2.5rem;">
+                                            <select id="edit-student-status" name="status" class="form-input" style="appearance: none; -webkit-appearance: none; padding-right: 2.5rem;">
                                                 <option value="active">Efetivado (Ativo)</option>
                                                 <option value="waiting_approval">Pendente (Aguardando Aprovação)</option>
                                                 <option value="waiting">Aguardando (Novo)</option>
@@ -709,7 +709,7 @@ export const TeacherStudents = {
                                     </div>
                                     <div class="form-group">
                                         <label>Objetivo/Motivação</label>
-                                        <textarea id="edit-student-reason" class="form-input" style="height: 100px; padding: 0.8rem;"></textarea>
+                                        <textarea id="edit-student-reason" name="reason" class="form-input" style="height: 100px; padding: 0.8rem;"></textarea>
                                     </div>
                                     <div style="margin-top: 2rem; display: flex; gap: 1rem;">
                                         <button type="button" onclick="document.getElementById('student-modal').classList.remove('active')" class="btn-secondary" style="flex: 1;">Cancelar</button>

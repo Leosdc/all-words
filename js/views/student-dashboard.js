@@ -13,7 +13,7 @@ export const StudentDashboard = {
     render: (user) => {
         const name = user.displayName || user.email.split('@')[0];
         return `
-            <section id="dashboard-view" class="view active">
+            <section id="dashboard-view" class="view active student-dash">
                 <div class="dashboard-layout">
                     ${Sidebar.render(user, 'dash')}
                     <main class="main-content">
@@ -348,7 +348,7 @@ export const StudentDashboard = {
 
     renderAgenda: (user) => {
         return `
-            <section id="agenda-view" class="view active">
+            <section id="agenda-view" class="view active student-dash">
                 <div class="dashboard-layout">
                     ${Sidebar.render(user, 'agenda')}
                     <main class="main-content">
