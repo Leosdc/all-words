@@ -271,9 +271,19 @@ export const StudentDashboard = {
                                             <span style="display: flex; align-items: center; gap: 6px;"><i data-lucide="clock" style="width: 14px;"></i> ${lesson.time}</span>
                                         </div>
                                     </div>
-                                    <button class="btn-primary" onclick="window.viewLessonDetail('${lesson.id}')" style="width: auto; padding: 0.6rem 1.2rem; font-size: 0.9rem; border-radius: 8px;">
-                                        <i data-lucide="play-circle" style="width: 16px; height: 16px; margin-right: 6px;"></i> Ver
-                                    </button>
+                                    <div style="display: flex; gap: 8px;">
+                                        ${lesson.meetLink ? `
+                                            <button class="btn-secondary" onclick="window.open('${lesson.meetLink}', '_blank')" style="width: auto; padding: 0.6rem 1rem; font-size: 0.9rem; border-radius: 8px; display: flex; align-items: center; gap: 8px; background: #ecfdf5; color: #059669; border-color: #d1fae5;">
+                                                <i data-lucide="video" style="width: 16px; height: 16px;"></i> Entrar na Sala
+                                            </button>
+                                        ` : ''}
+                                        <button class="btn-secondary" onclick="window.openBoard('${lesson.id}')" style="width: auto; padding: 0.6rem 1rem; font-size: 0.9rem; border-radius: 8px; display: flex; align-items: center; gap: 8px; background: #fdf2f8; color: #db2777; border-color: #fce7f3;">
+                                            <i data-lucide="layout" style="width: 16px; height: 16px;"></i> Abrir Quadro
+                                        </button>
+                                        <button class="btn-primary" onclick="window.viewLessonDetail('${lesson.id}')" style="width: auto; padding: 0.6rem 1.2rem; font-size: 0.9rem; border-radius: 8px;">
+                                            <i data-lucide="play-circle" style="width: 16px; height: 16px; margin-right: 6px;"></i> Ver
+                                        </button>
+                                    </div>
                                 </div>
                             `).join('')}
                         </div>
@@ -322,9 +332,19 @@ export const StudentDashboard = {
                                         <span style="display: flex; align-items: center; gap: 6px;"><i data-lucide="clock" style="width: 14px;"></i> ${lesson.time}</span>
                                     </div>
                                 </div>
-                                <button class="btn-primary" onclick="window.viewLessonDetail('${lesson.id}')" style="width: auto; padding: 0.6rem 1.2rem; font-size: 0.9rem; border-radius: 8px;">
-                                    <i data-lucide="play-circle" style="width: 16px; height: 16px; margin-right: 6px;"></i> Ver Conteúdo
-                                </button>
+                                <div style="display: flex; gap: 8px;">
+                                    ${lesson.meetLink ? `
+                                        <button class="btn-secondary" onclick="window.open('${lesson.meetLink}', '_blank')" style="width: auto; padding: 0.6rem 1rem; font-size: 0.9rem; border-radius: 8px; display: flex; align-items: center; gap: 8px; background: #ecfdf5; color: #059669; border-color: #d1fae5;">
+                                            <i data-lucide="video" style="width: 16px; height: 16px;"></i> Sala Virtual
+                                        </button>
+                                    ` : ''}
+                                    <button class="btn-secondary" onclick="window.openBoard('${lesson.id}')" style="width: auto; padding: 0.6rem 1rem; font-size: 0.9rem; border-radius: 8px; display: flex; align-items: center; gap: 8px; background: #fdf2f8; color: #db2777; border-color: #fce7f3;">
+                                        <i data-lucide="layout" style="width: 16px; height: 16px;"></i> Quadro
+                                    </button>
+                                    <button class="btn-primary" onclick="window.viewLessonDetail('${lesson.id}')" style="width: auto; padding: 0.6rem 1.2rem; font-size: 0.9rem; border-radius: 8px;">
+                                        <i data-lucide="play-circle" style="width: 16px; height: 16px; margin-right: 6px;"></i> Ver Conteúdo
+                                    </button>
+                                </div>
                             </div>
                         `).join('')}
                     </div>

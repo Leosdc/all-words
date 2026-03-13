@@ -6,10 +6,24 @@ import { TeacherDashboard } from './views/teacher-dashboard.js';
 import { TeacherStudents, TeacherLessons, TeacherExercises, TeacherFormation } from './views/teacher-subviews.js';
 import { ProfileModal } from './views/profile-view.js';
 import { AdminView } from './views/admin-view.js';
+import { BoardView } from './views/board-view.js';
 import { modal } from './ui/modal.js';
 import { chatWidget } from './ui/chat-widget.js';
 
 const app = document.getElementById('app');
+
+// --- DEEP LINK DETECTION (Run immediately before state init) ---
+const urlParams = new URLSearchParams(window.location.search);
+const viewParam = urlParams.get('view');
+const idParam = urlParams.get('id');
+
+if (viewParam === 'board' && idParam) {
+    console.log('Deep link detected: board', idParam);
+    sessionStorage.setItem('boardLessonId', idParam);
+    sessionStorage.setItem('currentView', 'board');
+    // Clear URL params to avoid re-triggering on refresh if user navigates away
+    window.history.replaceState({}, document.title, window.location.pathname);
+}
 
 // State
 let intendedRole = sessionStorage.getItem('intendedRole') || 'student';
@@ -105,6 +119,13 @@ const navigate = (viewName) => {
             attachEventsFn = () => AdminView.attachEvents(navigate, currentUser);
             break;
 
+        case 'board':
+            if (!currentUser) return navigate('home');
+            const lessonId = sessionStorage.getItem('boardLessonId');
+            viewHtml = BoardView.render(currentUser, lessonId);
+            attachEventsFn = () => BoardView.attachEvents(navigate, currentUser, lessonId);
+            break;
+
         default:
             return navigate('home');
     }
@@ -175,13 +196,15 @@ authService.init((user, role) => {
         } else if (role === 'teacher' || role === 'admin') {
             // Restore last view if available, else default to appropriate dashboard
             const lastView = sessionStorage.getItem('currentView');
-            if (lastView && (lastView.startsWith('teacher-') || lastView === 'admin-dashboard')) {
+            if (lastView && (lastView.startsWith('teacher-') || lastView === 'admin-dashboard' || lastView === 'board')) {
                 navigate(lastView);
             } else {
                 navigate(role === 'admin' ? 'admin-dashboard' : 'teacher-dashboard');
             }
         } else {
-            navigate('student-dashboard');
+            const lastView = sessionStorage.getItem('currentView');
+            if (lastView === 'board') navigate('board');
+            else navigate('student-dashboard');
         }
     } else {
         // Logged out
@@ -212,6 +235,14 @@ document.addEventListener('click', (e) => {
         return;
     }
 });
+
+// --- BOARD NAVIGATION HELPERS ---
+window.openBoard = (lessonId) => {
+    const url = new URL(window.location.origin + window.location.pathname);
+    url.searchParams.set('view', 'board');
+    url.searchParams.set('id', lessonId);
+    window.open(url.toString(), '_blank');
+};
 
 // Initial Render
 // Initial Render handled by authService

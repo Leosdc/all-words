@@ -586,6 +586,13 @@ export const TeacherStudents = {
                                         <label>Tema Central</label>
                                         <input type="text" name="l_theme" id="input-l-theme" class="form-input" required placeholder="Ex: Gramática Básica">
                                     </div>
+                                    <div class="form-group">
+                                        <label>Link do Google Meet</label>
+                                        <div style="position: relative;">
+                                            <i data-lucide="video" style="position: absolute; left: 1rem; top: 50%; transform: translateY(-50%); width: 18px; color: #64748b;"></i>
+                                            <input type="url" name="l_meet" id="input-l-meet" class="form-input" placeholder="https://meet.google.com/..." style="padding-left: 3rem;">
+                                        </div>
+                                    </div>
                                     <div class="form-group" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
                                         <div>
                                             <label>Data</label>
@@ -988,9 +995,18 @@ function renderStudentLessons(studentId) {
                                         <span style="font-size: 0.75rem; font-weight: 700; background: ${isFinished ? '#f1f5f9' : '#e0f2fe'}; color: ${isFinished ? '#64748b' : '#0284c7'}; padding: 4px 10px; border-radius: 6px; text-transform: uppercase;">
                                             ${status}
                                         </span>
-                                        <span style="font-size: 0.8rem; color: #94a3b8; font-weight: 500;">
-                                            ${new Date(lesson.date).toLocaleDateString("pt-BR")} - ${lesson.time}
-                                        </span>
+                                        <div style="display: flex; gap: 8px;">
+                                            ${lesson.meetLink ? `
+                                                <button onclick="event.stopPropagation(); window.open('${lesson.meetLink}', '_blank')" 
+                                                        style="background: #ecfdf5; color: #059669; border: 1px solid #d1fae5; padding: 4px 8px; border-radius: 6px; font-size: 0.75rem; font-weight: 600; display: flex; align-items: center; gap: 4px; cursor: pointer;" title="Entrar na Sala Virtual">
+                                                    <i data-lucide="video" style="width: 12px; height: 12px;"></i> Meet
+                                                </button>
+                                            ` : ''}
+                                            <button onclick="event.stopPropagation(); window.openBoard('${lesson.id}')" 
+                                                    style="background: #fdf2f8; color: #db2777; border: 1px solid #fce7f3; padding: 4px 8px; border-radius: 6px; font-size: 0.75rem; font-weight: 600; display: flex; align-items: center; gap: 4px; cursor: pointer;" title="Abrir Quadro Real-time">
+                                                <i data-lucide="layout" style="width: 12px; height: 12px;"></i> Quadro
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
 
@@ -1157,6 +1173,7 @@ window.openAddLessonModal = (studentId, lessonId = null) => {
                 studentName: student ? student.name : 'Unknown',
                 title: formData.get('l_title'),
                 theme: formData.get('l_theme'),
+                meetLink: formData.get('l_meet'),
                 date: formData.get('l_date'),
                 time: formData.get('l_time'),
                 content: contentList
@@ -1225,8 +1242,9 @@ window.openAddLessonModal = (studentId, lessonId = null) => {
         // Edit Mode
         const lesson = lessonsData.find(l => l.id === lessonId);
         if (lesson) {
-            form.querySelector('[name="l_title"]').value = lesson.title;
-            form.querySelector('[name="l_theme"]').value = lesson.theme;
+            form.querySelector('[name="l_title"]').value = lesson.title || '';
+            form.querySelector('[name="l_theme"]').value = lesson.theme || '';
+            form.querySelector('[name="l_meet"]').value = lesson.meetLink || '';
 
             if (lesson.content && Array.isArray(lesson.content)) {
                 lesson.content.forEach(item => {
@@ -1682,7 +1700,21 @@ export const TeacherLessons = {
                                             <span style="display: flex; align-items: center; gap: 6px;"><i data-lucide="clock" style="width: 14px;"></i> ${lesson.time}</span>
                                         </div>
                                     </div>
-                                    <i data-lucide="edit-3" style="color: #cbd5e1; width: 20px;"></i>
+                                    <div style="display: flex; align-items: center; gap: 12px;">
+                                        <div style="display: flex; gap: 8px; margin-right: 1rem;">
+                                            ${lesson.meetLink ? `
+                                                <button onclick="event.stopPropagation(); window.open('${lesson.meetLink}', '_blank')" 
+                                                        style="background: #ecfdf5; color: #059669; border: 1px solid #d1fae5; padding: 0.5rem 1rem; border-radius: 10px; font-size: 0.85rem; font-weight: 600; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                                    <i data-lucide="video" style="width: 16px; height: 16px;"></i> Sala
+                                                </button>
+                                            ` : ''}
+                                            <button onclick="event.stopPropagation(); window.openBoard('${lesson.id}')" 
+                                                    style="background: #fdf2f8; color: #db2777; border: 1px solid #fce7f3; padding: 0.5rem 1rem; border-radius: 10px; font-size: 0.85rem; font-weight: 600; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                                <i data-lucide="layout" style="width: 16px; height: 16px;"></i> Quadro
+                                            </button>
+                                        </div>
+                                        <i data-lucide="edit-3" style="color: #cbd5e1; width: 24px; cursor: pointer;"></i>
+                                    </div>
                                 </div>
                         `;
                 }).join('')}
